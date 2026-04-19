@@ -1,0 +1,33 @@
+# Xcode build artifacts
+DerivedData/
+build/
+*.xcuserstate
+*.xcuserdata/
+xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+
+# Swift Package Manager
+.swiftpm/
+Package.resolved
+.build/
+Packages/
+
+# macOS
+.DS_Store
+
+# Local config
+*.local
+secrets.plist
+
+# Models (downloaded at runtime, not committed)
+Models/*.mlmodelc
+Models/*.gguf
+Models/*.safetensors
+
+# Recordings (huge, never commit)
+Recordings/
+*.m4a
+*.wav
+*.mp3
