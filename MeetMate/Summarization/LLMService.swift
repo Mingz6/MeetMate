@@ -42,6 +42,7 @@ final class LLMService: ObservableObject {
     @Published private(set) var isLoaded = false
     @Published private(set) var isGenerating = false
     @Published private(set) var loadedModel: ModelChoice?
+    @Published private(set) var loadProgress: Double = 0
 
     private var modelContainer: ModelContainer?
 
@@ -67,11 +68,13 @@ final class LLMService: ObservableObject {
         print("[LLM] loading \(target.displayName) (\(target.approximateSizeGB)GB on first run)…")
         // Cap GPU cache so the LLM doesn't fight Whisper for memory
         MLX.GPU.set(cacheLimit: 20 * 1024 * 1024)
+        loadProgress = 0
 
         let config = ModelConfiguration(id: target.rawValue)
         var lastReportedPct = -1
-        let container = try await LLMModelFactory.shared.loadContainer(configuration: config) { progress in
+        let container = try await LLMModelFactory.shared.loadContainer(configuration: config) { [weak self] progress in
             let pct = Int(progress.fractionCompleted * 100)
+            Task { @MainActor in self?.loadProgress = progress.fractionCompleted }
             if pct >= lastReportedPct + 5 {
                 lastReportedPct = pct
                 print("[LLM] download \(pct)%")
@@ -79,6 +82,7 @@ final class LLMService: ObservableObject {
         }
         modelContainer = container
         loadedModel = target
+        loadProgress = 1
         isLoaded = true
         print("[LLM] model ready")
     }

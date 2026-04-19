@@ -72,6 +72,7 @@ private struct Section<Content: View>: View {
 private struct SuggestionCard: View {
     let suggestion: ReplySuggestion
     let onDismiss: () -> Void
+    @State private var didCopy = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -79,10 +80,18 @@ private struct SuggestionCard: View {
                 Label("Suggested reply", systemImage: "bubble.left.and.bubble.right.fill")
                     .font(.caption).bold()
                 Spacer()
+                Button(action: copy) {
+                    Image(systemName: didCopy ? "checkmark.circle.fill" : "doc.on.doc")
+                }
+                .buttonStyle(.plain)
+                .help(didCopy ? "Copied" : "Copy reply")
+                .accessibilityLabel(didCopy ? "Copied" : "Copy reply to clipboard")
                 Button(action: onDismiss) {
                     Image(systemName: "xmark.circle.fill")
                 }
                 .buttonStyle(.plain)
+                .help("Dismiss")
+                .accessibilityLabel("Dismiss suggestion")
             }
             Text(suggestion.suggestedReply)
                 .textSelection(.enabled)
@@ -91,4 +100,18 @@ private struct SuggestionCard: View {
         .background(Color.yellow.opacity(0.2))
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
+
+    #if os(macOS)
+    private func copy() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(suggestion.suggestedReply, forType: .string)
+        didCopy = true
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            didCopy = false
+        }
+    }
+    #else
+    private func copy() {}
+    #endif
 }

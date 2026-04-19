@@ -3,7 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @AppStorage("userName") private var userName: String = "Ming"
     @AppStorage("modelChoiceOverride") private var modelOverride: String = ""
-    @AppStorage("meetingsArchivePath") private var archivePath: String = "~/code/crna/meetings"
+    @AppStorage("meetingsArchivePath") private var archivePath: String = "~/Documents/MeetMate"
 
     private var recommended: LLMService.ModelChoice { LLMService.recommendedModel() }
 

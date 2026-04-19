@@ -16,6 +16,8 @@ struct MainView: View {
     @AppStorage("showPolished") private var showPolished: Bool = true
     @AppStorage("showCheatsheet") private var showCheatsheet: Bool = true
     @State private var currentMeeting: Meeting?
+    @State private var startError: String?
+    @State private var loadError: String?
 
     init() {
         let llmInstance = LLMService()
@@ -29,8 +31,11 @@ struct MainView: View {
         VStack(spacing: 8) {
             HStack(spacing: 16) {
                 if audio.isRecording {
-                    Button(action: stopMeeting) {
-                        Label("Stop", systemImage: "stop.circle.fill").foregroundStyle(.red)
+                    HStack(spacing: 6) {
+                        RecordingDot()
+                        Button(action: stopMeeting) {
+                            Label("Stop", systemImage: "stop.circle.fill").foregroundStyle(.red)
+                        }
                     }
                 } else {
                     Button(action: startMeeting) {
@@ -42,9 +47,19 @@ struct MainView: View {
                 Toggle(isOn: $showPolished) { Label("Polished", systemImage: "wand.and.stars") }
                 Toggle(isOn: $showCheatsheet) { Label("Topic summary", systemImage: "lightbulb") }
                 Spacer()
+                Button(action: copyTranscript) {
+                    Label("Copy transcript", systemImage: "doc.on.doc")
+                }
+                .disabled(transcriber.confirmedTranscript.isEmpty)
+                .help("Copy confirmed transcript to clipboard")
             }
             .toggleStyle(.checkbox)
             .padding(.horizontal)
+
+            if !llm.isLoaded {
+                ModelLoadingBanner(progress: llm.loadProgress, modelName: LLMService.recommendedModel().displayName)
+                    .padding(.horizontal)
+            }
 
             HStack(spacing: 16) {
                 if showLive || showPolished {
@@ -74,11 +89,22 @@ struct MainView: View {
             .padding([.horizontal, .bottom])
         }
         .padding(.top, 8)
+        .alert("Couldn’t start recording", isPresented: Binding(get: { startError != nil }, set: { if !$0 { startError = nil } })) {
+            Button("OK", role: .cancel) { startError = nil }
+        } message: {
+            Text(startError ?? "")
+        }
+        .alert("Model failed to load", isPresented: Binding(get: { loadError != nil }, set: { if !$0 { loadError = nil } })) {
+            Button("OK", role: .cancel) { loadError = nil }
+        } message: {
+            Text(loadError ?? "")
+        }
         .task {
             do {
                 try await transcriber.loadModel()
             } catch {
                 print("[Whisper] loadModel failed:", error)
+                loadError = "Whisper: \(error.localizedDescription)"
             }
             do {
                 let override = UserDefaults.standard.string(forKey: "modelChoiceOverride") ?? ""
@@ -86,6 +112,7 @@ struct MainView: View {
                 try await llm.load(choice)
             } catch {
                 print("[LLM] load failed:", error)
+                loadError = "LLM: \(error.localizedDescription)"
             }
         }
     }
@@ -107,6 +134,7 @@ struct MainView: View {
                 try await audio.start()
             } catch {
                 print("[Meeting] audio start failed:", error)
+                startError = error.localizedDescription
                 context.delete(meeting)
                 currentMeeting = nil
                 return
@@ -129,6 +157,17 @@ struct MainView: View {
         currentMeeting?.endedAt = .now
         // TODO: Phase 1.7 - run final summary, save to ~/code/crna/meetings/
     }
+
+    #if os(macOS)
+    private func copyTranscript() {
+        let text = transcriber.confirmedTranscript
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+    #else
+    private func copyTranscript() {}
+    #endif
 
     @ViewBuilder
     private var transcriptPane: some View {
@@ -183,32 +222,41 @@ enum TranscriptMode: String, CaseIterable, Identifiable {
     }
 }
 
-private struct ControlPanel: View {
-    let isRecording: Bool
-    let onStart: () -> Void
-    let onStop: () -> Void
+private struct RecordingDot: View {
+    @State private var pulse = false
+    var body: some View {
+        Circle()
+            .fill(.red)
+            .frame(width: 8, height: 8)
+            .opacity(pulse ? 1.0 : 0.3)
+            .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulse)
+            .onAppear { pulse = true }
+            .accessibilityLabel("Recording")
+    }
+}
+
+private struct ModelLoadingBanner: View {
+    let progress: Double
+    let modelName: String
 
     var body: some View {
-        VStack(spacing: 20) {
-            Text("MeetMate")
-                .font(.largeTitle).bold()
-
-            if isRecording {
-                Button(action: onStop) {
-                    Label("Stop", systemImage: "stop.circle.fill")
-                        .foregroundStyle(.red)
-                        .font(.title)
-                }
-            } else {
-                Button(action: onStart) {
-                    Label("Start meeting", systemImage: "record.circle")
-                        .font(.title)
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Loading \(modelName)…").font(.caption).bold()
+                if progress > 0 {
+                    ProgressView(value: progress)
+                        .frame(maxWidth: 240)
+                } else {
+                    Text("Starting up… first run downloads several GB.")
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
             }
-
             Spacer()
         }
-        .padding()
-        .frame(minWidth: 220)
+        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
     }
 }
