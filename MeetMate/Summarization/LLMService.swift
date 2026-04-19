@@ -71,12 +71,15 @@ final class LLMService: ObservableObject {
         loadProgress = 0
 
         let config = ModelConfiguration(id: target.rawValue)
-        var lastReportedPct = -1
-        let container = try await LLMModelFactory.shared.loadContainer(configuration: config) { [weak self] progress in
-            let pct = Int(progress.fractionCompleted * 100)
-            Task { @MainActor in self?.loadProgress = progress.fractionCompleted }
-            if pct >= lastReportedPct + 5 {
-                lastReportedPct = pct
+        let progressBox = ProgressBox()
+        let progressUpdate: @Sendable (Double) -> Void = { [weak self] fraction in
+            Task { @MainActor [weak self] in self?.loadProgress = fraction }
+        }
+        let container = try await LLMModelFactory.shared.loadContainer(configuration: config) { progress in
+            let fraction = progress.fractionCompleted
+            let pct = Int(fraction * 100)
+            progressUpdate(fraction)
+            if progressBox.shouldLog(pct: pct) {
                 print("[LLM] download \(pct)%")
             }
         }
@@ -115,4 +118,19 @@ final class LLMService: ObservableObject {
 enum LLMError: Error {
     case notLoaded
     case generationFailed(String)
+}
+
+/// Thread-safe throttle for progress logging from the loadContainer @Sendable callback.
+/// Sendable + locked so the closure capture doesn't trip Swift 6 strict concurrency.
+private final class ProgressBox: @unchecked Sendable {
+    private let lock = NSLock()
+    nonisolated(unsafe) private var lastReportedPct = -1
+
+    nonisolated func shouldLog(pct: Int) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard pct >= lastReportedPct + 5 else { return false }
+        lastReportedPct = pct
+        return true
+    }
 }
