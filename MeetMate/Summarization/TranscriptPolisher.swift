@@ -60,9 +60,7 @@ final class TranscriptPolisher: ObservableObject {
     func stop() {
         task?.cancel()
         task = nil
-        Task { [weak self] in
-            await self?.polishOnce()
-        }
+        transcriber = nil
     }
 
     private func polishOnce() async {

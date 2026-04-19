@@ -36,9 +36,12 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
     }
 
     func stop() {
+        let captured = stream
+        stream = nil
+        bufferHandler = nil
+        guard let captured else { return }
         Task {
-            try? await stream?.stopCapture()
-            stream = nil
+            try? await captured.stopCapture()
             print("[SysAudio] stopped")
         }
     }

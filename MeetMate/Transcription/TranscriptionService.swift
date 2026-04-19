@@ -250,12 +250,12 @@ final class TranscriptionService: ObservableObject {
 
     private func downsampleToMono16k(_ buffer: AVAudioPCMBuffer) -> [Float]? {
         guard let inputFormat = buffer.format as AVAudioFormat? else { return nil }
-        let outputFormat = AVAudioFormat(
+        guard let outputFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: Double(targetSampleRate),
             channels: 1,
             interleaved: false
-        )!
+        ) else { return nil }
 
         guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else { return nil }
 

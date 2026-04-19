@@ -81,7 +81,9 @@ struct MainView: View {
                 print("[Whisper] loadModel failed:", error)
             }
             do {
-                try await llm.load()
+                let override = UserDefaults.standard.string(forKey: "modelChoiceOverride") ?? ""
+                let choice = LLMService.ModelChoice(rawValue: override)
+                try await llm.load(choice)
             } catch {
                 print("[LLM] load failed:", error)
             }
@@ -101,7 +103,14 @@ struct MainView: View {
         }
 
         Task {
-            try? await audio.start()
+            do {
+                try await audio.start()
+            } catch {
+                print("[Meeting] audio start failed:", error)
+                context.delete(meeting)
+                currentMeeting = nil
+                return
+            }
             cheatsheet.startRolling { transcriber.liveTranscript }
             polisher.start(reading: transcriber)
             replier.startWatching(
