@@ -6,7 +6,7 @@ struct MainView: View {
     @Environment(\.modelContext) private var context
     @StateObject private var audio = AudioCaptureService()
     @StateObject private var transcriber = TranscriptionService()
-    @StateObject private var llm = LLMService()
+    @StateObject private var llm: LLMService
     @StateObject private var cheatsheet: CheatsheetGenerator
     @StateObject private var replier: ReplyGenerator
     @StateObject private var polisher: TranscriptPolisher
@@ -155,7 +155,7 @@ struct MainView: View {
         polisher.stop()
         replier.stopWatching()
         currentMeeting?.endedAt = .now
-        // TODO: Phase 1.7 - run final summary, save to ~/code/crna/meetings/
+        // TODO: Phase 1.7 — run final summary, save markdown to meetingsArchivePath setting
     }
 
     #if os(macOS)
@@ -199,25 +199,6 @@ struct MainView: View {
             }
         case (false, false):
             EmptyView()
-        }
-    }
-}
-
-enum TranscriptMode: String, CaseIterable, Identifiable {
-    case live, polished, sideBySide
-    var id: String { rawValue }
-    var label: String {
-        switch self {
-        case .live: return "Live"
-        case .polished: return "Polished"
-        case .sideBySide: return "Side by side"
-        }
-    }
-    var icon: String {
-        switch self {
-        case .live: return "waveform"
-        case .polished: return "wand.and.stars"
-        case .sideBySide: return "rectangle.split.2x1"
         }
     }
 }

@@ -8,7 +8,7 @@ Local-first macOS meeting assistant. Captures mic + system audio, transcribes vi
 - **UI**: SwiftUI, macOS 14+ (Sonoma) — macOS only, not iOS/iPadOS
 - **STT**: [WhisperKit](https://github.com/argmaxinc/WhisperKit) — `openai_whisper-large-v3`
 - **LLM**: [mlx-swift-examples](https://github.com/ml-explore/mlx-swift-examples) — `mlx-community/Qwen3-14B-4bit` via `LLMModelFactory`
-- **Audio**: AVAudioEngine (mic) + CoreAudio process tap / HAL aggregate device (system audio loopback)
+- **Audio**: AVAudioEngine (mic) + ScreenCaptureKit `SCStream` (system audio loopback)
 - **Storage**: SwiftData
 - **Build**: Xcode project (`MeetMate.xcodeproj`), no SwiftPM at root
 
@@ -21,7 +21,7 @@ MeetMate/
 ├── Audio/
 │   ├── AudioCaptureService.swift    Merges mic + system audio
 │   ├── MicrophoneCapture.swift      AVAudioEngine; idempotent tap install/remove
-│   └── SystemAudioCapture.swift     CoreAudio HAL loopback
+│   └── SystemAudioCapture.swift     ScreenCaptureKit SCStream loopback
 ├── Transcription/
 │   └── TranscriptionService.swift   Streaming sliding-window WhisperKit
 ├── Summarization/

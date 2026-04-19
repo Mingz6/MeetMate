@@ -27,7 +27,7 @@
                   ┌──────────────────────┐         ┌──────────────────────┐
                   │ CheatsheetGenerator  │         │   ReplyGenerator     │
                   │ ──────────────       │         │ ─────────────        │
-                  │ • Every 60s          │         │ • Watch for "Ming?"  │
+                  │ • Every 30s          │         │ • Watch for "Ming?"  │
                   │ • Topic, points,     │         │ • On trigger, gen    │
                   │   actions            │         │   2-3 sentence reply │
                   └──────────┬───────────┘         └──────────┬───────────┘
@@ -43,7 +43,8 @@
 
          ┌─────────────────────────────────────────────────────────┐
          │ End of meeting: final summary → SwiftData + markdown    │
-         │ file saved to ~/code/crna/meetings/{date}-{slug}.md     │
+         │ file saved to `meetingsArchivePath` from Settings        │
+         │ (default ~/Documents/MeetMate; not yet wired up)         │
          └─────────────────────────────────────────────────────────┘
 ```
 
@@ -59,7 +60,7 @@
 2. Buffers pushed into `TranscriptionService` ring buffer
 3. Every 1-2s, full chunk fed to `WhisperKit.transcribe()` → text segment
 4. Text appended to `liveTranscript` + saved as `TranscriptSegment` in SwiftData
-5. `CheatsheetGenerator` polls `liveTranscript` every 60s, asks LLM for structured summary
+5. `CheatsheetGenerator` polls `liveTranscript` every 30s, asks LLM for structured summary
 6. `ReplyGenerator` polls `liveTranscript` every 2s, scans for user's name, triggers reply on match
 7. UI binds to `@Published` state, redraws automatically
 8. On stop: meeting + segments persisted, final summary written to disk

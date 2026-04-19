@@ -87,6 +87,7 @@ final class ReplyGenerator: ObservableObject {
         \(transcript)
 
         Reply (2-3 sentences, friendly and direct, no preamble):
+        /no_think
         """
 
         let token = sessionToken
