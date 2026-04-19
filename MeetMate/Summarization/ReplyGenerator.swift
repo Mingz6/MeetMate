@@ -7,7 +7,9 @@ final class ReplyGenerator: ObservableObject {
 
     private let llm: LLMService
     private var watchTask: Task<Void, Never>?
+    private var sessionToken: Int = 0
     private var lastDetectionAt: Date = .distantPast
+    private var lastMentionSentence: String = ""
     private let cooldownSec: TimeInterval = 15
 
     init(llm: LLMService) {
@@ -20,6 +22,8 @@ final class ReplyGenerator: ObservableObject {
         cheatsheetProvider: @escaping () -> Cheatsheet
     ) {
         watchTask?.cancel()
+        sessionToken &+= 1
+        lastMentionSentence = ""
         watchTask = Task { [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
@@ -29,8 +33,10 @@ final class ReplyGenerator: ObservableObject {
                 let recent = String(transcript.suffix(800))
 
                 if let question = self.detectMention(of: userName, in: recent),
+                   question != self.lastMentionSentence,
                    Date().timeIntervalSince(self.lastDetectionAt) > self.cooldownSec {
                     self.lastDetectionAt = .now
+                    self.lastMentionSentence = question
                     await self.generateReply(question: question, transcript: recent, sheet: cheatsheetProvider())
                 }
             }
@@ -38,6 +44,7 @@ final class ReplyGenerator: ObservableObject {
     }
 
     func stopWatching() {
+        sessionToken &+= 1
         watchTask?.cancel()
         watchTask = nil
     }
@@ -82,8 +89,13 @@ final class ReplyGenerator: ObservableObject {
         Reply (2-3 sentences, friendly and direct, no preamble):
         """
 
+        let token = sessionToken
         do {
             let reply = try await llm.generate(prompt: prompt, maxTokens: 200)
+            guard token == sessionToken, !Task.isCancelled else {
+                print("[Reply] dropping stale suggestion from prior session")
+                return
+            }
             pendingSuggestion = ReplySuggestion(triggerQuestion: question, suggestedReply: reply)
         } catch {
             print("Reply generation failed: \(error)")

@@ -29,6 +29,7 @@ final class TranscriptPolisher: ObservableObject {
     private weak var transcriber: TranscriptionService?
     private var task: Task<Void, Never>?
     private var cursor: Int = 0
+    private var sessionToken: Int = 0
     private let intervalSec: TimeInterval = 25
     private let minSegmentsToPolish = 6
 
@@ -38,6 +39,7 @@ final class TranscriptPolisher: ObservableObject {
 
     func start(reading transcriber: TranscriptionService) {
         stop()
+        sessionToken &+= 1
         self.transcriber = transcriber
         cursor = 0
         finalizedParagraphs = []
@@ -58,6 +60,7 @@ final class TranscriptPolisher: ObservableObject {
     }
 
     func stop() {
+        sessionToken &+= 1
         task?.cancel()
         task = nil
         transcriber = nil
@@ -103,11 +106,15 @@ final class TranscriptPolisher: ObservableObject {
 
         isPolishing = true
         defer { isPolishing = false }
+        let token = sessionToken
         do {
             let response = try await llm.generate(prompt: prompt, maxTokens: 1200)
+            guard token == sessionToken, !Task.isCancelled else {
+                print("[Polish] dropping stale result from prior session")
+                return
+            }
             guard let parsed = parseResponse(response) else {
-                print("[Polish] parse failed, raw response: \(response.prefix(200))")
-                cursor = all.count
+                print("[Polish] parse failed, raw response: \(response.prefix(200)) — keeping cursor for retry next cycle")
                 return
             }
 

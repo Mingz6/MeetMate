@@ -7,6 +7,7 @@ final class CheatsheetGenerator: ObservableObject {
 
     private let llm: LLMService
     private var rollingTask: Task<Void, Never>?
+    private var sessionToken: Int = 0
     private let updateIntervalSec: TimeInterval = 30
 
     init(llm: LLMService) {
@@ -15,6 +16,7 @@ final class CheatsheetGenerator: ObservableObject {
 
     func startRolling(transcriptProvider: @escaping () -> String) {
         rollingTask?.cancel()
+        sessionToken &+= 1
         rollingTask = Task { [weak self] in
             guard let self else { return }
             // Wait until LLM is loaded before polling
@@ -35,6 +37,7 @@ final class CheatsheetGenerator: ObservableObject {
     }
 
     func stopRolling() {
+        sessionToken &+= 1
         rollingTask?.cancel()
         rollingTask = nil
     }
@@ -55,27 +58,32 @@ final class CheatsheetGenerator: ObservableObject {
         /no_think
         """
 
+        let token = sessionToken
         do {
             print("[Cheatsheet] refreshing…")
             let response = try await llm.generate(prompt: prompt, maxTokens: 600)
+            guard token == sessionToken, !Task.isCancelled else {
+                print("[Cheatsheet] dropping stale result from prior session")
+                return
+            }
             print("[Cheatsheet] raw response:\n\(response)")
-            current = parseCheatsheet(from: response)
+            current = parseCheatsheet(from: response, previous: current)
             print("[Cheatsheet] topic=\(current.currentTopic) points=\(current.keyPoints.count) Qs=\(current.openQuestions.count) actions=\(current.actionItems.count)")
         } catch {
             print("[Cheatsheet] refresh failed: \(error)")
         }
     }
 
-    private func parseCheatsheet(from response: String) -> Cheatsheet {
-        var sheet = Cheatsheet()
+    private func parseCheatsheet(from response: String, previous: Cheatsheet) -> Cheatsheet {
+        var sheet = previous
         sheet.lastUpdated = .now
 
         guard let json = extractJSON(from: response),
               let data = json.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            // Fallback: keep prior sheet's fields, just stamp time
-            print("[Cheatsheet] JSON parse failed, falling back to plain text")
-            sheet.currentTopic = String(response.prefix(200))
+            // Fallback: keep prior sheet's fields, just stamp time. One bad parse shouldn't
+            // wipe valid key points / questions / actions.
+            print("[Cheatsheet] JSON parse failed, keeping previous fields")
             return sheet
         }
 

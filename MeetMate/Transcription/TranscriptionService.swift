@@ -42,6 +42,7 @@ final class TranscriptionService: ObservableObject {
     private let preConfirmContextSec: Float = 5
 
     private var streamTask: Task<Void, Never>?
+    private var sessionToken: Int = 0
 
     init() {}
 
@@ -74,6 +75,7 @@ final class TranscriptionService: ObservableObject {
     }
 
     func reset() {
+        sessionToken &+= 1
         liveTranscript = ""
         confirmedTranscript = ""
         unconfirmedText = ""
@@ -119,6 +121,7 @@ final class TranscriptionService: ObservableObject {
         guard let whisperKit else { return }
         let snapshot = samples
         let relativeStart = max(0, lastConfirmedSec - purgedDurationSec)
+        let token = sessionToken
 
         let opts = DecodingOptions(
             verbose: false,
@@ -140,6 +143,10 @@ final class TranscriptionService: ObservableObject {
         do {
             let results = try await whisperKit.transcribe(audioArray: snapshot, decodeOptions: opts)
             guard let first = results.first else { return }
+            guard token == sessionToken, !Task.isCancelled else {
+                print("[Whisper] dropping stale segments from prior session")
+                return
+            }
             await applySegments(first.segments)
         } catch {
             print("[Whisper] stream error:", error)
@@ -165,6 +172,14 @@ final class TranscriptionService: ObservableObject {
                 let absStart = Float(seg.start) + purgedDurationSec
                 let absEnd = Float(seg.end) + purgedDurationSec
                 guard absEnd > lastConfirmedSec else { continue }
+                // Trim boundary-overlapping segments — Whisper sometimes re-segments around
+                // lastConfirmedSec and emits a segment that starts before the confirm boundary.
+                // Re-appending the whole text would duplicate words. Skip the whole segment;
+                // the next cycle will pick up content past the new boundary.
+                if absStart < lastConfirmedSec - 0.1 {
+                    print("[Whisper] skipping overlap segment [\(absStart)–\(absEnd)] (boundary \(lastConfirmedSec))")
+                    continue
+                }
                 appendConfirmed(text: text, startSec: absStart, endSec: absEnd)
                 lastConfirmedSec = absEnd
             }
