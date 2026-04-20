@@ -1,7 +1,27 @@
 import Foundation
 import Combine
 @preconcurrency import AVFoundation
+#if os(iOS)
+import UIKit
+#endif
 import WhisperKit
+
+/// Whisper model tier picked from device class. Bigger = better accuracy, slower, more disk.
+enum WhisperModelTier {
+    static func recommendedModelName() -> String {
+        #if os(macOS)
+        return "openai_whisper-large-v3"
+        #elseif os(iOS)
+        let isPad = UIDevice.current.userInterfaceIdiom == .pad
+        let ramGB = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
+        if isPad && ramGB >= 12 { return "openai_whisper-small" }   // M-chip iPad
+        if isPad { return "openai_whisper-base" }                    // older iPad
+        return ramGB >= 8 ? "openai_whisper-base" : "openai_whisper-tiny"
+        #else
+        return "openai_whisper-base"
+        #endif
+    }
+}
 
 /// Streaming transcription with sliding-window + confirmed/unconfirmed segments.
 ///
@@ -47,8 +67,8 @@ final class TranscriptionService: ObservableObject {
     init() {}
 
     func loadModel() async throws {
-        let modelName = "openai_whisper-large-v3"
-        print("[Whisper] loading model \(modelName) (first run downloads ~3GB)…")
+        let modelName = WhisperModelTier.recommendedModelName()
+        print("[Whisper] loading model \(modelName) (first run downloads model files)…")
         modelStatus = "loading…"
         let config = WhisperKitConfig(
             model: modelName,

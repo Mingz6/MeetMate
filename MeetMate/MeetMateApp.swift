@@ -5,7 +5,11 @@ import SwiftData
 struct MeetMateApp: App {
     var body: some Scene {
         WindowGroup {
+            #if os(macOS)
             MainView()
+            #else
+            RecordView()
+            #endif
         }
         .modelContainer(for: [Meeting.self, TranscriptSegment.self])
 

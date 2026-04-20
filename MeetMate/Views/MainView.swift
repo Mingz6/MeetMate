@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 @preconcurrency import AVFoundation
 import SwiftData
@@ -241,3 +242,4 @@ private struct ModelLoadingBanner: View {
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
     }
 }
+#endif
