@@ -1,0 +1,126 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build: macOS",
+      "type": "shell",
+      "command": "xcodebuild",
+      "args": [
+        "-project", "MeetMate.xcodeproj",
+        "-scheme", "MeetMate",
+        "-configuration", "Debug",
+        "-destination", "platform=macOS",
+        "build"
+      ],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$swiftc"],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "Build: iPhone Simulator",
+      "type": "shell",
+      "command": "xcodebuild",
+      "args": [
+        "-project", "MeetMate.xcodeproj",
+        "-scheme", "MeetMate",
+        "-configuration", "Debug",
+        "-destination", "platform=iOS Simulator,name=iPhone 17 Pro",
+        "build"
+      ],
+      "group": "build",
+      "problemMatcher": ["$swiftc"],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "Build: iPad Simulator",
+      "type": "shell",
+      "command": "xcodebuild",
+      "args": [
+        "-project", "MeetMate.xcodeproj",
+        "-scheme", "MeetMate",
+        "-configuration", "Debug",
+        "-destination", "platform=iOS Simulator,name=iPad Pro 11-inch (M5)",
+        "build"
+      ],
+      "group": "build",
+      "problemMatcher": ["$swiftc"],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "Run: macOS",
+      "type": "shell",
+      "command": "open",
+      "args": [
+        "-a",
+        "${workspaceFolder}/build/Build/Products/Debug/MeetMate.app"
+      ],
+      "dependsOn": "Build: macOS (to local path)",
+      "presentation": { "reveal": "silent", "panel": "shared" }
+    },
+    {
+      "label": "Build: macOS (to local path)",
+      "type": "shell",
+      "command": "xcodebuild",
+      "args": [
+        "-project", "MeetMate.xcodeproj",
+        "-scheme", "MeetMate",
+        "-configuration", "Debug",
+        "-destination", "platform=macOS",
+        "-derivedDataPath", "build",
+        "build"
+      ],
+      "problemMatcher": ["$swiftc"],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "Run: iPhone Simulator",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+        "xcrun simctl boot 'iPhone 17 Pro' 2>/dev/null; open -a Simulator; xcrun simctl install 'iPhone 17 Pro' build/Build/Products/Debug-iphonesimulator/MeetMate.app && xcrun simctl launch --console 'iPhone 17 Pro' dev.mingz.MeetMate"
+      ],
+      "dependsOn": "Build: iPhone Simulator (to local path)",
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "Build: iPhone Simulator (to local path)",
+      "type": "shell",
+      "command": "xcodebuild",
+      "args": [
+        "-project", "MeetMate.xcodeproj",
+        "-scheme", "MeetMate",
+        "-configuration", "Debug",
+        "-destination", "platform=iOS Simulator,name=iPhone 17 Pro",
+        "-derivedDataPath", "build",
+        "build"
+      ],
+      "problemMatcher": ["$swiftc"],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "Test",
+      "type": "shell",
+      "command": "xcodebuild",
+      "args": [
+        "-project", "MeetMate.xcodeproj",
+        "-scheme", "MeetMate",
+        "-destination", "platform=macOS",
+        "test"
+      ],
+      "group": "test",
+      "problemMatcher": ["$swiftc"],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "Reset SPM caches",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+        "rm -rf ~/Library/Developer/Xcode/DerivedData/MeetMate-* && rm -rf MeetMate.xcodeproj/project.xcworkspace/xcshareddata/swiftpm && xcodebuild -resolvePackageDependencies -project MeetMate.xcodeproj -scheme MeetMate"
+      ],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    }
+  ]
+}
