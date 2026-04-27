@@ -1,14 +1,24 @@
 # MeetMate
 
-Local-first macOS meeting assistant. Real-time transcription, live cheatsheet, polished transcript, reply suggestions — all on-device, no cloud, no API keys.
+Cloud-first meeting assistant for Apple platforms. Real-time transcription, live cheatsheet, polished transcript, reply suggestions — powered by Azure with on-device fallbacks when offline.
+
+**Status:** macOS is the active target. iPadOS and iOS are kept as design constraints (one codebase, narrow platform divergence) and will be polished as a follow-up phase once the macOS experience is solid.
 
 ## Stack
 
-- **UI:** SwiftUI (macOS 14+)
-- **Speech-to-text:** [WhisperKit](https://github.com/argmaxinc/WhisperKit) — `openai_whisper-large-v3`
-- **LLM:** [mlx-swift-examples](https://github.com/ml-explore/mlx-swift-examples) — `mlx-community/Qwen3-14B-4bit`
-- **Audio capture:** AVAudioEngine (mic) + ScreenCaptureKit `SCStream` (system audio)
-- **Storage:** SwiftData
+- **UI:** SwiftUI (macOS 14+, iPadOS 17+, iOS 17+)
+- **Speech-to-text (primary):** Azure AI Speech — live continuous recognition + batch transcription
+- **Speech-to-text (offline fallback):** [WhisperKit](https://github.com/argmaxinc/WhisperKit)
+- **LLM (primary):** Azure OpenAI — polish, cheatsheet, reply
+- **LLM (offline fallback, opt-in):** [mlx-swift-examples](https://github.com/ml-explore/mlx-swift-examples) — `mlx-community/Qwen3-4B-4bit`
+- **Audio capture:** AVAudioEngine (mic, all platforms) + ScreenCaptureKit (system audio, macOS only)
+- **Storage:** SwiftData + session folder on disk
+
+## Operating modes
+
+1. **Cloud (default)** — STT + LLM both go to Azure. One resource, one auth, one bill.
+2. **Record-only** — no network or 3 consecutive cloud failures → keep capturing audio + raw transcript to disk; polish/cheatsheet jobs queue and replay when back online.
+3. **Local fallback (opt-in)** — user enables on-device WhisperKit + MLX Qwen3 in Settings. Slower, runs the machine hot, but works fully offline.
 
 ## Project Structure
 
@@ -17,14 +27,14 @@ MeetMate/
 ├── MeetMateApp.swift           App entry
 ├── MeetMate.entitlements       Sandbox + mic + audio input
 ├── Audio/                      Mic + system audio capture
-├── Transcription/              WhisperKit streaming sliding window
-├── Summarization/              MLX LLM, polisher, cheatsheet, reply
+├── Transcription/              Azure Speech client + WhisperKit fallback
+├── Summarization/              Azure OpenAI client, polisher, cheatsheet, reply
 ├── Models/Meeting.swift        SwiftData
 └── Views/                      MainView + 4 panes
-docs/                           Architecture + setup
+docs/                           Architecture, setup, roadmap
 ```
 
-See [.github/copilot-instructions.md](.github/copilot-instructions.md) for the full architecture brief Copilot uses on this repo.
+See [.github/copilot-instructions.md](.github/copilot-instructions.md) for the architecture brief Copilot uses on this repo.
 
 ## Build & Run
 
@@ -34,25 +44,13 @@ xcodebuild -project MeetMate.xcodeproj -scheme MeetMate -configuration Debug -de
 
 Or open `MeetMate.xcodeproj` in Xcode and ⌘R.
 
-First launch will prompt for microphone + screen recording permissions. Grant both.
-
-## First-Run Model Download
-
-WhisperKit downloads `openai_whisper-large-v3` (~3 GB) automatically on first launch. The MLX Qwen3-14B-4bit model (~8 GB) downloads on first LLM use.
-
-To pre-download Qwen and skip the 15-minute wait:
-
-```bash
-mkdir -p ~/Library/Containers/dev.mingz.MeetMate/Data/Library/Caches/models/mlx-community/Qwen3-14B-4bit
-cd ~/Library/Containers/dev.mingz.MeetMate/Data/Library/Caches/models/mlx-community/Qwen3-14B-4bit
-hf download mlx-community/Qwen3-14B-4bit --local-dir . --max-workers 8
-```
+First launch will prompt for microphone + screen recording permissions. Grant both, then paste your Azure OpenAI + Azure AI Speech keys in Settings (stored in Keychain). Full steps in [docs/setup.md](docs/setup.md).
 
 ## Documentation
 
+- [docs/ROADMAP.md](docs/ROADMAP.md) — single source of truth for forward work
 - [docs/architecture.md](docs/architecture.md) — system diagram and data flow
 - [docs/setup.md](docs/setup.md) — local dev setup
-- [docs/phase-0-checklist.md](docs/phase-0-checklist.md) — original validation checklist (historical)
 
 ## License
 
