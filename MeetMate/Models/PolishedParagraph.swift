@@ -21,6 +21,17 @@ struct PolishedParagraph: Codable, Identifiable, Sendable {
     }
 }
 
+/// A proposed revision to one or more existing paragraphs.
+/// The LLM suggests merging/replacing `replaceIds` with `newText`.
+/// User must accept or reject before it lands in the paragraph list.
+struct ParagraphRevision: Identifiable, Sendable {
+    let id: UUID = UUID()
+    let replaceIds: [String]    // paragraph IDs to replace
+    let newText: String         // revised text
+    let reason: String          // LLM explanation
+    let timestamp: Date = .now
+}
+
 /// Generator for stable paragraph IDs. Monotonic per session, never reused.
 @MainActor
 final class ParagraphIDGenerator {
