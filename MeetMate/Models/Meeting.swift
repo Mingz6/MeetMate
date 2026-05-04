@@ -41,14 +41,16 @@ final class TranscriptSegment {
     var endTime: TimeInterval
     var text: String
     var speaker: String?
+    var source: String?
     var meeting: Meeting?
 
-    init(startTime: TimeInterval, endTime: TimeInterval, text: String, speaker: String? = nil) {
+    init(startTime: TimeInterval, endTime: TimeInterval, text: String, speaker: String? = nil, source: AudioSource? = nil) {
         self.id = UUID()
         self.startTime = startTime
         self.endTime = endTime
         self.text = text
         self.speaker = speaker
+        self.source = source?.rawValue
     }
 }
 

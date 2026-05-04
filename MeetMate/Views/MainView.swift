@@ -220,22 +220,21 @@ struct MainView: View {
             // Non-fatal — recording works without disk persistence
         }
 
-        audio.onAudioBuffer = { [weak transcriber] buffer in
-            Task { @MainActor in
-                transcriber?.ingest(buffer)
-            }
-        }
+        audio.onAudioBuffer = nil
 
-        if let writer = storage {
-            audio.onMicBuffer = { [weak writer] buffer in
-                writer?.writeMicBuffer(buffer)
+        // Separate streams: mic → micRecognizer, system → systemRecognizer (cloud),
+        // or both → mixed local WhisperKit fallback
+        audio.onMicBuffer = { [weak transcriber, weak storage] buffer in
+            Task { @MainActor in
+                transcriber?.ingestMic(buffer)
             }
-            audio.onSystemBuffer = { [weak writer] buffer in
-                writer?.writeSystemBuffer(buffer)
+            storage?.writeMicBuffer(buffer)
+        }
+        audio.onSystemBuffer = { [weak transcriber, weak storage] buffer in
+            Task { @MainActor in
+                transcriber?.ingestSystem(buffer)
             }
-        } else {
-            audio.onMicBuffer = nil
-            audio.onSystemBuffer = nil
+            storage?.writeSystemBuffer(buffer)
         }
 
         Task {

@@ -11,6 +11,7 @@ struct PolishedParagraph: Codable, Identifiable, Sendable {
     let startSec: Float
     let endSec: Float
     let version: Int
+    let source: AudioSource?
 
     /// Format timestamp as [mm:ss]
     var timestampLabel: String {
@@ -18,6 +19,15 @@ struct PolishedParagraph: Codable, Identifiable, Sendable {
         let min = totalSec / 60
         let sec = totalSec % 60
         return String(format: "[%02d:%02d]", min, sec)
+    }
+
+    /// Human-readable source label: "me" for mic, "remote" for system
+    var sourceLabel: String? {
+        switch source {
+        case .mic: return "me"
+        case .system: return "remote"
+        default: return nil
+        }
     }
 }
 

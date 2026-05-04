@@ -1,12 +1,20 @@
 import Foundation
 import AVFoundation
 
+/// Which audio source produced a segment.
+enum AudioSource: String, Codable, Sendable {
+    case mic     // Local microphone (the user / in-room speakers)
+    case system  // System audio loopback (remote participants via Zoom/Teams/etc.)
+    case mixed   // Legacy mixed stream (local WhisperKit fallback)
+}
+
 /// A single recognized speech segment from any STT backend.
 struct STTSegment: Sendable {
     let text: String
     let startSec: Float
     let endSec: Float
     let isFinal: Bool
+    let source: AudioSource
 }
 
 /// Errors from STT providers.
