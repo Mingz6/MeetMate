@@ -4,6 +4,8 @@
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>MeetMate transcribes meeting audio locally on your device.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>MeetMate captures webcam frames alongside screen recording for meeting context.</string>
 	<key>NSDocumentsFolderUsageDescription</key>
 	<string>MeetMate saves meeting recordings and transcripts to your Documents folder.</string>
 	<key>UIFileSharingEnabled</key>

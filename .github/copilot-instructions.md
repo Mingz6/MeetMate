@@ -1,61 +1,100 @@
 # MeetMate — Copilot Instructions
 
 ## Project Context
-Local-first macOS meeting assistant. Captures mic + system audio, transcribes via WhisperKit, polishes the transcript and generates a rolling cheatsheet via on-device Qwen3-14B (MLX). Everything runs on-device — no cloud, no API keys, no telemetry.
+Cloud-first macOS meeting assistant. Captures mic + system audio (+ optional webcam), transcribes via Azure AI Speech (live WebSocket) with local WhisperKit as offline fallback, polishes transcript and generates a rolling cheatsheet via Azure OpenAI (with optional local MLX Qwen3 fallback). Recordings, transcripts, and polish are saved to disk automatically.
 
 ## Tech Stack
 - **Language**: Swift 5.9+
-- **UI**: SwiftUI, macOS 14+ (Sonoma) — macOS only, not iOS/iPadOS
-- **STT**: [WhisperKit](https://github.com/argmaxinc/WhisperKit) — `openai_whisper-large-v3`
-- **LLM**: [mlx-swift-examples](https://github.com/ml-explore/mlx-swift-examples) — `mlx-community/Qwen3-14B-4bit` via `LLMModelFactory`
+- **UI**: SwiftUI, macOS 14+ (Sonoma) — macOS primary, iPadOS/iOS deferred
+- **STT (primary)**: Azure AI Speech — pure Swift WebSocket continuous recognition (`wss://{region}.stt.speech.microsoft.com`)
+- **STT (fallback)**: [WhisperKit](https://github.com/argmaxinc/WhisperKit) — `openai_whisper-large-v3-turbo` for offline batch, sliding-window for live
+- **LLM (primary)**: Azure OpenAI Chat Completions — per-task routing (mini deployment for polish/cheatsheet, primary for quality-sensitive tasks)
+- **LLM (fallback)**: [mlx-swift-examples](https://github.com/ml-explore/mlx-swift-examples) — `mlx-community/Qwen3-4B-4bit` via `LLMModelFactory`
 - **Audio**: AVAudioEngine (mic) + ScreenCaptureKit `SCStream` (system audio loopback)
-- **Storage**: SwiftData
-- **Build**: Xcode project (`MeetMate.xcodeproj`), no SwiftPM at root
+- **Video**: ScreenCaptureKit (screen frames) + AVCaptureSession (webcam)
+- **Storage**: SwiftData for Meeting model, file-based SessionStorage (`~/Documents/MeetMate/Sessions/`)
+- **Build**: Xcode project (`MeetMate.xcodeproj`), SPM for packages
 
 ## Project Structure
 ```
 MeetMate/
 ├── MeetMateApp.swift                App entry
-├── MeetMate.entitlements            Mic + audio-input + sandbox
-├── Info.plist                       Mic + screen-capture usage strings
+├── MeetMate.entitlements            Sandbox: mic, camera, network, files
+├── Info.plist                       Usage descriptions (mic, camera, documents)
 ├── Audio/
-│   ├── AudioCaptureService.swift    Merges mic + system audio
+│   ├── AudioCaptureService.swift    Merges mic + system audio, levels
 │   ├── MicrophoneCapture.swift      AVAudioEngine; idempotent tap install/remove
-│   └── SystemAudioCapture.swift     ScreenCaptureKit SCStream loopback
-├── Transcription/
-│   └── TranscriptionService.swift   Streaming sliding-window WhisperKit
+│   ├── SystemAudioCapture.swift     ScreenCaptureKit SCStream loopback
+│   ├── FrameCaptureService.swift    Screen frame capture via SCStream (1-5fps)
+│   └── WebcamCaptureService.swift   AVCaptureSession webcam frames
+├── Cloud/
+│   ├── AzureOpenAIProvider.swift    Azure OpenAI Chat Completions (task-routed)
+│   ├── KeychainHelper.swift         Keychain CRUD for API credentials
+│   ├── LLMProvider.swift            Protocol + LLMTask enum + LLMResult
+│   ├── ReachabilityMonitor.swift    NWPathMonitor wrapper + failure tracking
+│   └── ReplayQueue.swift            Disk-backed offline retry queue
+├── Context/
+│   ├── ContextService.swift         URL/PDF/text pre-meeting context
+│   └── VocabularyExtractor.swift    Extract terms for phrase biasing
+├── Models/
+│   ├── Meeting.swift                SwiftData model
+│   └── PolishedParagraph.swift      Stable ID + version + timestamps
+├── Storage/
+│   └── SessionStorage.swift         File-based session I/O (audio, frames, JSONL)
 ├── Summarization/
-│   ├── LLMService.swift             MLX Qwen3-14B-4bit loader + generate()
-│   ├── TranscriptPolisher.swift     25s cycle → JSON {finalized, draft}
-│   ├── CheatsheetGenerator.swift    Rolling topic / key points / questions / actions
-│   └── ReplyGenerator.swift         Name-mention watcher
-├── Models/Meeting.swift             SwiftData model
-└── Views/                           MainView + 4 panes
-docs/                                Architecture + setup notes
+│   ├── LLMService.swift             Provider-routed service (cloud → local → recording-only)
+│   ├── TranscriptPolisher.swift     25s live polish + re-polish + batch accept
+│   ├── CheatsheetGenerator.swift    Rolling topic summary
+│   ├── ReplyGenerator.swift         Name-mention reply suggestions
+│   └── VisionService.swift          Screen frame + transcript → vision analysis
+├── Transcription/
+│   ├── AzureSpeechSTT.swift         WebSocket continuous recognition
+│   ├── BatchReTranscriber.swift     Post-meeting re-transcription (cloud or local)
+│   ├── STTProvider.swift            STT protocol
+│   ├── TranscriptionService.swift   Orchestrates live STT + segment storage
+│   └── VADGate.swift                RMS-based voice activity detection
+└── Views/
+    ├── MainView.swift               Main orchestrator view
+    ├── SettingsView.swift            Credentials + preferences
+    ├── PolishedTranscriptView.swift  Polished text with timestamps
+    ├── CheatsheetView.swift          Topic summary display
+    ├── TranscriptView.swift          Live raw transcript
+    ├── ContextPane.swift             Pre-meeting context input
+    ├── ProviderStatusBar.swift       Cloud/local/offline status + cost
+    ├── STTStatusIndicator.swift      STT mode indicator
+    ├── BatchReTranscriptionBanner.swift  "Improved transcript ready" UI
+    └── RecordView.swift              iOS/iPadOS mic-only (deferred)
+docs/                                 Architecture + setup + roadmap
 ```
 
 ## Build & Run
 ```bash
 xcodebuild -project MeetMate.xcodeproj -scheme MeetMate -configuration Debug -destination 'platform=macOS' build
 ```
-Run from Xcode (⌘R) — needs mic + screen-recording permission grants in System Settings on first launch.
+Run from Xcode (⌘R) — needs mic + camera + screen-recording permission grants in System Settings on first launch.
 
 ## Conventions
 - SwiftUI views co-locate state via `@StateObject` / `@Published` services injected from `MainView.init`.
-- Long-running services (`AudioCaptureService`, `TranscriptionService`, `LLMService`) are `ObservableObject`s with `@MainActor`-bound mutable state.
+- Long-running services are `ObservableObject`s with `@MainActor`-bound mutable state.
+- Session-token cancel pattern: increment `sessionToken` on start/stop, guard `token == sessionToken` after every `await`.
 - Logs use `print("[<Component>] message")` — no logging framework.
-- All file paths under the app sandbox: `~/Library/Containers/dev.mingz.MeetMate/Data/`.
+- API credentials stored in macOS Keychain via `KeychainHelper`, never in UserDefaults.
+- `LLMTask` enum routes calls: `.polish`/`.cheatsheet` → mini deployment, `.rePolish`/`.batchPolish`/`.vision`/`.reply` → primary deployment.
 
 ## Key Patterns
-- **Streaming Whisper sliding-window** (`TranscriptionService`): mirrors WhisperKit's `AudioStreamTranscriber` — confirmed/unconfirmed split, `clipTimestamps: [lastConfirmedSec - purgedDurationSec]`, `requiredForConfirmation: 2`, VAD-gated by RMS, 90s buffer with 30s retention. Don't replace with batch chunking — accuracy regresses badly.
-- **Idempotent mic capture** (`MicrophoneCapture`): `tapInstalled` flag + early-exit if `engine.isRunning` + defensive `removeTap` before install. Prevents `nullptr == Tap()` precondition crash on start/stop/restart.
-- **Qwen3 `/no_think`**: every LLM prompt ends with `/no_think` to skip Qwen3's `<think>` reasoning tokens. `LLMService.stripThinking()` is a belt-and-suspenders cleanup if any leak through.
-- **JSON-from-LLM extraction**: prompts ask for `{...}` only; `parseResponse` slices first-`{` to last-`}` substring before `JSONSerialization` — survives stray prose.
-- **Polisher contract**: `{"finalized": ["paragraph", ...], "draft": "trailing thought"}`. Cycle: 25s, min 6 segments. Prompt is editor-mode (allows light paraphrasing) — do NOT revert to "drop only" prompt; output becomes pass-through.
+- **Azure Speech WebSocket STT** (`AzureSpeechSTT`): dual recognizers (mic + system), phrase list biasing, speaker diarization via `SpeakerId` in phrase results.
+- **Streaming Whisper sliding-window** (`TranscriptionService`): offline fallback — confirmed/unconfirmed split, `clipTimestamps`, `requiredForConfirmation: 2`, VAD-gated by RMS, 90s buffer with 30s retention.
+- **Idempotent mic capture** (`MicrophoneCapture`): `tapInstalled` flag + early-exit if `engine.isRunning` + defensive `removeTap` before install.
+- **Qwen3 `/no_think`**: every local LLM prompt ends with `/no_think`. `LLMService.stripThinking()` cleans any leaked `<think>` tokens.
+- **JSON-from-LLM extraction**: prompts ask for `{...}` only; `parseResponse` slices first-`{` to last-`}` before `JSONSerialization`.
+- **Polisher contract**: `{"finalized": [{"id": "p_000123", "text": "...", "startSec": 12.3, "endSec": 18.7, "version": 1}], "draft": "..."}`. Stable IDs assigned by Swift, not LLM.
+- **Replay queue**: offline polish/cheatsheet jobs written to disk, drained automatically when cloud comes back.
+- **Batch re-transcription**: Fast Transcription API (cloud) or WhisperKit `transcribe(audioPath:)` (local) — runs on meeting stop, produces diarized transcript with accept/reject UI.
 
 ## Gotchas
-- Model cache lives at `~/Library/Containers/dev.mingz.MeetMate/Data/Library/Caches/models/mlx-community/Qwen3-14B-4bit/`. Pre-download with `hf download mlx-community/Qwen3-14B-4bit --local-dir . --max-workers 8` from inside that dir to skip 15-minute first-run.
+- WhisperKit is pinned to `main` branch (no release tag) — fragile, update carefully.
 - App Sandbox is enabled — `audioanalyticsd` precondition errors in console are noise; ignore.
-- WhisperKit segments arrive every 1.5s tick; the last 2 segments stay in `unconfirmedText` and re-decode each tick. Segments before that are immutable in `confirmedTranscript`.
+- Model cache lives at `~/Library/Containers/dev.mingz.MeetMate/Data/Library/Caches/models/`.
+- `ReachabilityMonitor` uses NWPathMonitor + a 3-failure circuit breaker — don't test cloud availability by making a real API call.
+- `SessionStorage` writes to `~/Documents/MeetMate/Sessions/{YYYY-MM-DD-HHmm}/` — the path is derived from `Meeting.startedAt`, not configurable.
 - Hallucination blocklist in `TranscriptionService.applySegments` drops "Thank you", "you", ".", "-" — Whisper hallucinates these on silence.
-- Don't add features that require network. The whole point is local-first.

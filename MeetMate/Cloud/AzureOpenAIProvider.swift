@@ -53,7 +53,7 @@ final class AzureOpenAIProvider: LLMProvider, @unchecked Sendable {
             resolvedDeployment = deployment
         }
 
-        let url = buildURL(endpoint: endpoint, deployment: resolvedDeployment)
+        let url = try buildURL(endpoint: endpoint, deployment: resolvedDeployment)
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue(apiKey, forHTTPHeaderField: "api-key")
@@ -94,7 +94,7 @@ final class AzureOpenAIProvider: LLMProvider, @unchecked Sendable {
             throw LLMProviderError.notConfigured("Azure OpenAI endpoint, API key, or deployment missing from Keychain")
         }
 
-        let url = buildURL(endpoint: endpoint, deployment: deployment)
+        let url = try buildURL(endpoint: endpoint, deployment: deployment)
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue(apiKey, forHTTPHeaderField: "api-key")
@@ -140,7 +140,7 @@ final class AzureOpenAIProvider: LLMProvider, @unchecked Sendable {
                         throw LLMProviderError.notConfigured("Azure OpenAI not configured")
                     }
 
-                    let url = buildURL(endpoint: endpoint, deployment: deployment)
+                    let url = try buildURL(endpoint: endpoint, deployment: deployment)
                     var request = URLRequest(url: url)
                     request.httpMethod = "POST"
                     request.setValue(apiKey, forHTTPHeaderField: "api-key")
@@ -182,10 +182,13 @@ final class AzureOpenAIProvider: LLMProvider, @unchecked Sendable {
 
     // MARK: - Private
 
-    private func buildURL(endpoint: String, deployment: String) -> URL {
+    private func buildURL(endpoint: String, deployment: String) throws -> URL {
         let base = endpoint.hasSuffix("/") ? String(endpoint.dropLast()) : endpoint
         let urlString = "\(base)/openai/deployments/\(deployment)/chat/completions?api-version=\(apiVersion)"
-        return URL(string: urlString)!
+        guard let url = URL(string: urlString) else {
+            throw LLMProviderError.parseError("Invalid endpoint URL: \(endpoint)")
+        }
+        return url
     }
 
     private func parseResponse(_ data: Data) throws -> LLMResult {

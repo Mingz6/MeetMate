@@ -3,7 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @AppStorage("userName") private var userName: String = "Ming"
     @AppStorage("modelChoiceOverride") private var modelOverride: String = ""
-    @AppStorage("meetingsArchivePath") private var archivePath: String = "~/Documents/MeetMate"
+
 
     // Azure OpenAI fields — stored in Keychain, local state for editing
     @State private var azureEndpoint: String = ""
@@ -117,9 +117,7 @@ struct SettingsView: View {
                     .font(.caption)
             }
 
-            Section("Meeting archive") {
-                TextField("Path", text: $archivePath)
-            }
+
         }
         .padding()
         .frame(minWidth: 480, minHeight: 400)

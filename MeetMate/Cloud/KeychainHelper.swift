@@ -74,7 +74,6 @@ extension KeychainHelper {
     static let azureAPIKeyKey = "azure-openai-api-key"
     static let azureDeploymentKey = "azure-openai-deployment"
     static let azureDeploymentMiniKey = "azure-openai-deployment-mini"  // Lighter model for polish/cheatsheet
-    static let azureRegionKey = "azure-openai-region"
 
     // Azure Speech (shares region with OpenAI when same resource)
     static let azureSpeechKeyKey = "azure-speech-api-key"
