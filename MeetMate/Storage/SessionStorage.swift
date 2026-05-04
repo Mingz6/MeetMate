@@ -133,6 +133,15 @@ final class SessionStorage: Sendable {
         }
     }
 
+    // MARK: - Context
+
+    func writeContext(_ context: String) {
+        fileQueue.async { [sessionFolder] in
+            let url = sessionFolder.appendingPathComponent("context.md")
+            try? context.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
     // MARK: - Delete
 
     func deleteSessionFolder() throws {

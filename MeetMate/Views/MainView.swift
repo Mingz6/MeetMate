@@ -23,6 +23,8 @@ struct MainView: View {
     @State private var audioPlayer: AVAudioPlayer?
     @State private var isPlaying = false
     @State private var showDeleteConfirm = false
+    @StateObject private var contextService = ContextService()
+    @State private var showContext = false
 
     init() {
         let llmInstance = LLMService()
@@ -51,6 +53,7 @@ struct MainView: View {
                 Toggle(isOn: $showLive) { Label("Live", systemImage: "waveform") }
                 Toggle(isOn: $showPolished) { Label("Polished", systemImage: "wand.and.stars") }
                 Toggle(isOn: $showCheatsheet) { Label("Topic summary", systemImage: "lightbulb") }
+                Toggle(isOn: $showContext) { Label("Context", systemImage: "doc.text") }
                 Spacer()
                 Button(action: copyTranscript) {
                     Label("Copy transcript", systemImage: "doc.on.doc")
@@ -111,7 +114,11 @@ struct MainView: View {
                     )
                     .frame(width: 400)
                 }
-                if !showLive && !showPolished && !showCheatsheet {
+                if showContext {
+                    ContextPane(contextService: contextService)
+                        .frame(width: 320)
+                }
+                if !showLive && !showPolished && !showCheatsheet && !showContext {
                     ContentUnavailableView("Nothing to show", systemImage: "eye.slash", description: Text("Enable a pane above."))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -213,6 +220,17 @@ struct MainView: View {
                 sessionStorage = nil
                 return
             }
+            // Wire context provider into consumers
+            let ctxProvider: () -> String = { [weak contextService] in contextService?.combinedContext ?? "" }
+            polisher.contextProvider = ctxProvider
+            cheatsheet.contextProvider = ctxProvider
+            replier.contextProvider = ctxProvider
+
+            // Persist context to session folder
+            if let storage {
+                contextService.persist(to: storage)
+            }
+
             cheatsheet.startRolling { transcriber.liveTranscript }
             polisher.start(reading: transcriber)
             replier.startWatching(
