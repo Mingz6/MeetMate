@@ -69,8 +69,13 @@ enum KeychainHelper {
 // MARK: - Well-known keys for Azure configuration
 
 extension KeychainHelper {
+    // Azure OpenAI
     static let azureEndpointKey = "azure-openai-endpoint"
     static let azureAPIKeyKey = "azure-openai-api-key"
     static let azureDeploymentKey = "azure-openai-deployment"
     static let azureRegionKey = "azure-openai-region"
+
+    // Azure Speech (shares region with OpenAI when same resource)
+    static let azureSpeechKeyKey = "azure-speech-api-key"
+    static let azureSpeechRegionKey = "azure-speech-region"
 }
