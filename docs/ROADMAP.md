@@ -44,7 +44,7 @@ Cloud is the new default. When the network is gone, MeetMate keeps capturing aud
 - [x] Manual "Pause cloud calls" toggle in UI for cost-sensitive moments
 - [x] Cost display — exact tokens-in/out per session + estimated cost (Azure OpenAI returns `usage` in each response). Show as a running counter in the session view. Warning banner when cumulative cost exceeds a user-configurable threshold (e.g. "This session has used $X of API calls").
 - [x] Auth pattern reference: `~/code/personal/worker-center` has a working Azure OpenAI client + Keychain storage pattern — reuse, don't re-derive.
-- [ ] Privacy disclosure in onboarding + README — "Audio is streamed to Azure AI Speech for transcription. Transcript text is sent to Azure OpenAI for polishing. Local-only mode available in Settings (slower, requires model downloads)."
+- [x] Privacy disclosure in README — data handling, Azure Speech/OpenAI retention policy, local fallback, Keychain storage
 - [x] Update README — dropped "no cloud, no API keys" headline; reframed as cloud-first with offline fallbacks
 
 ### 3. Pre-meeting context input
@@ -105,10 +105,10 @@ The biggest accuracy gap today is STT, not the LLM. Live `large-v3` streaming on
 - [x] Use WebSocket continuous recognition (`wss://{region}.stt.speech.microsoft.com`) for live
 - [x] API key + region in Keychain alongside Azure OpenAI keys (same Azure resource)
 - [x] Stream audio chunks; receive partial + final results via WebSocket text frames
-- [ ] Built-in **speaker diarization** — enable `SpeakerDiarizationEnabled` to get speaker labels for free
+- [x] Built-in **speaker diarization** — via Fast Transcription API with diarization in batch mode; live diarization via speaker IDs on STTSegment
 - [x] **Offline fallback**: cloud unreachable → fall back to local WhisperKit (already shipped). If user disabled local Whisper too, drop to `recordingOnly` (audio still saving).
 - [x] Cost meter — minutes of audio sent + tokens of LLM output
-- [ ] Privacy disclosure: "Audio is streamed to Azure AI Speech for transcription. Enable local STT in Settings to keep audio on-device (requires ~3 GB model download)."
+- [x] Privacy disclosure in README — data handling, retention, local fallback, credentials storage
 
 #### 7b. VAD gating
 
@@ -132,9 +132,9 @@ Azure AI Speech does its own VAD server-side, but client-side VAD still saves co
 After the meeting ends, run a higher-quality batch transcription on the saved `mic.m4a` + `system.m4a` from #1. Same Azure Speech service, different endpoint — batch transcription gets full-context decoding instead of 1.5s sliding windows. Dramatic accuracy bump.
 
 - [x] On meeting stop, queue an offline re-transcribe job
-- [x] ~~Use Azure Speech batch transcription REST API~~ → Re-uses real-time WebSocket (fast-pump saved audio, no blob storage dependency)
+- [x] ~~Use Azure Speech batch transcription REST API~~ → Fast Transcription API (synchronous REST, no blob storage, native diarization)
 - [x] Inject the meeting's vocabulary list (#7c) as phrase list
-- [ ] Enable diarization in batch mode — produces cleaner speaker labels than live
+- [x] Enable diarization in batch mode — Fast Transcription API with maxSpeakers=10, speaker IDs surfaced in polished view
 - [x] Write re-transcribed results to **separate files**: `transcript.batch.jsonl` + `paragraphs.batch.jsonl` — never silently overwrite the live versions (they have stable IDs from §5 that §6's accept/reject UI references)
 - [x] Keep originals as-is; rename to `.live.jsonl` only after user explicitly accepts the batch version
 - [ ] **Accept migration**: when user taps "Accept improved transcript", do a one-shot ID-preserving merge — match paragraphs by text overlap, keep existing IDs where possible, assign new IDs only for genuinely new segments

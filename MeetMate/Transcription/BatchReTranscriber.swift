@@ -2,9 +2,12 @@ import Foundation
 import Combine
 import AVFoundation
 
-/// Re-transcribes saved audio files post-meeting using a fresh Azure Speech WebSocket
-/// connection with full phrase list. Produces higher-quality results than live streaming
-/// because: no network jitter, complete audio (no VAD gaps), full phrase list injected.
+/// Re-transcribes saved audio files post-meeting using Azure Speech Fast Transcription API.
+/// Produces higher-quality results than live streaming because:
+/// - Full audio context (no sliding window)
+/// - Speaker diarization built in
+/// - Full phrase list injected
+/// - Word-level timestamps
 ///
 /// Results are written to `transcript.batch.jsonl` in the session folder — never overwrites
 /// the live transcript. Caller decides whether to accept the batch results.
@@ -13,7 +16,7 @@ final class BatchReTranscriber: ObservableObject {
 
     enum Status: Equatable {
         case idle
-        case loading           // Loading audio file
+        case loading           // Loading/converting audio file
         case transcribing(progress: Float)  // 0.0–1.0
         case complete(segmentCount: Int)
         case failed(String)
@@ -32,7 +35,7 @@ final class BatchReTranscriber: ObservableObject {
         let endTime: TimeInterval
         let text: String
         let confidence: Float?
-        let speaker: String?
+        let speaker: Int?
     }
 
     init(region: String, apiKey: String, language: String = "en-US") {
@@ -42,9 +45,6 @@ final class BatchReTranscriber: ObservableObject {
     }
 
     /// Start batch re-transcription of saved audio files.
-    /// - Parameters:
-    ///   - sessionFolder: Path to session folder containing mic.m4a / system.m4a
-    ///   - vocabulary: Phrase list for biasing
     func reTranscribe(sessionFolder: URL, vocabulary: [String]) async {
         guard !region.isEmpty, !apiKey.isEmpty else {
             status = .failed("Azure Speech not configured")
@@ -55,11 +55,10 @@ final class BatchReTranscriber: ObservableObject {
         collectedSegments = []
         status = .loading
 
-        // Load and decode audio
+        // Find audio file
         let micURL = sessionFolder.appendingPathComponent("mic.m4a")
         let systemURL = sessionFolder.appendingPathComponent("system.m4a")
 
-        // Try mic first, fall back to system
         let audioURL: URL
         if FileManager.default.fileExists(atPath: micURL.path) {
             audioURL = micURL
@@ -70,75 +69,119 @@ final class BatchReTranscriber: ObservableObject {
             return
         }
 
-        guard let samples = await loadAudioAs16kMono(url: audioURL) else {
-            status = .failed("Could not decode audio file")
+        // Convert to WAV (Fast Transcription API accepts wav/mp3/ogg/flac/m4a)
+        // m4a should work directly — no conversion needed
+        guard let audioData = try? Data(contentsOf: audioURL) else {
+            status = .failed("Could not read audio file")
             return
         }
 
-        let totalDuration = Float(samples.count) / 16_000.0
-        print("[Batch] loaded \(String(format: "%.1f", totalDuration))s of audio from \(audioURL.lastPathComponent)")
+        let fileSizeMB = Double(audioData.count) / 1_048_576
+        print("[Batch] loaded \(audioURL.lastPathComponent) (\(String(format: "%.1f", fileSizeMB)) MB)")
 
-        // Create a fresh Azure Speech connection and pump audio
-        status = .transcribing(progress: 0)
-        let stt = AzureSpeechSTT(region: region, apiKey: apiKey, language: language)
-        stt.phraseList = phraseList
+        guard audioData.count < 250 * 1_048_576 else {
+            status = .failed("Audio file exceeds 250MB limit")
+            return
+        }
 
-        let segmentCollector = SegmentCollector()
+        status = .transcribing(progress: 0.1)
 
+        // Call Fast Transcription API
+        let endpoint = "https://\(region).api.cognitive.microsoft.com/speechtotext/transcriptions:transcribe?api-version=2025-10-15"
+        guard let url = URL(string: endpoint) else {
+            status = .failed("Invalid endpoint URL")
+            return
+        }
+
+        let boundary = UUID().uuidString
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(apiKey, forHTTPHeaderField: "Ocp-Apim-Subscription-Key")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 300 // 5 min for large files
+
+        // Build definition JSON
+        var definition: [String: Any] = [
+            "locales": [language],
+            "profanityFilterMode": "None",
+            "diarization": [
+                "maxSpeakers": 10
+            ]
+        ]
+        if !phraseList.isEmpty {
+            let phrases = phraseList.prefix(500).map { ["value": $0] }
+            definition["customPhrases"] = [
+                ["phrases": phrases]
+            ]
+        }
+
+        guard let definitionData = try? JSONSerialization.data(withJSONObject: definition),
+              let definitionString = String(data: definitionData, encoding: .utf8) else {
+            status = .failed("Could not serialize definition")
+            return
+        }
+
+        // Build multipart body
+        var body = Data()
+        // Definition part
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"definition\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: application/json\r\n\r\n".data(using: .utf8)!)
+        body.append(definitionString.data(using: .utf8)!)
+        body.append("\r\n".data(using: .utf8)!)
+        // Audio part
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"audio\"; filename=\"\(audioURL.lastPathComponent)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: audio/mp4\r\n\r\n".data(using: .utf8)!)
+        body.append(audioData)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+
+        request.httpBody = body
+        status = .transcribing(progress: 0.3)
+
+        let responseData: Data
+        let response: URLResponse
         do {
-            try await stt.startContinuousRecognition(
-                onSegment: { segment in
-                    Task { @MainActor [weak segmentCollector] in
-                        segmentCollector?.add(segment)
-                    }
-                },
-                onError: { [weak self] error in
-                    Task { @MainActor in
-                        print("[Batch] error during re-transcription: \(error)")
-                        self?.status = .failed(error.localizedDescription)
-                    }
-                }
-            )
+            (responseData, response) = try await URLSession.shared.data(for: request)
         } catch {
-            status = .failed("Failed to connect: \(error.localizedDescription)")
+            status = .failed("Network error: \(error.localizedDescription)")
             return
         }
 
-        // Pump audio in chunks (~0.5s per chunk, faster than real-time)
-        let chunkSize = 8000 // 0.5s at 16kHz
-        let totalChunks = (samples.count + chunkSize - 1) / chunkSize
-
-        for i in 0..<totalChunks {
-            let start = i * chunkSize
-            let end = min(start + chunkSize, samples.count)
-            let chunk = Array(samples[start..<end])
-
-            await stt.ingestAudio(chunk)
-
-            // Update progress
-            let progress = Float(i + 1) / Float(totalChunks)
-            status = .transcribing(progress: progress)
-
-            // Small delay to avoid overwhelming the WebSocket (4x real-time)
-            if i % 8 == 7 {
-                try? await Task.sleep(nanoseconds: 50_000_000) // 50ms every 4s of audio
-            }
+        guard let httpResponse = response as? HTTPURLResponse else {
+            status = .failed("Invalid response")
+            return
         }
 
-        // Signal end and wait for final results
-        await stt.stopContinuousRecognition()
+        status = .transcribing(progress: 0.8)
 
-        // Give a moment for final results to arrive
-        try? await Task.sleep(nanoseconds: 500_000_000)
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            let body = String(data: responseData, encoding: .utf8) ?? "(binary)"
+            print("[Batch] API error \(httpResponse.statusCode): \(body.prefix(500))")
+            status = .failed("API error \(httpResponse.statusCode)")
+            return
+        }
 
-        // Collect results
-        collectedSegments = segmentCollector.segments.map { seg in
-            BatchSegment(
-                startTime: TimeInterval(seg.startSec),
-                endTime: TimeInterval(seg.endSec),
-                text: seg.text,
-                confidence: nil,
-                speaker: nil
+        // Parse response
+        guard let result = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+              let phrases = result["phrases"] as? [[String: Any]] else {
+            status = .failed("Could not parse transcription response")
+            return
+        }
+
+        collectedSegments = phrases.compactMap { phrase in
+            guard let text = phrase["text"] as? String, !text.isEmpty else { return nil }
+            let offsetMs = phrase["offsetMilliseconds"] as? Int ?? 0
+            let durationMs = phrase["durationMilliseconds"] as? Int ?? 0
+            let confidence = phrase["confidence"] as? Float
+            let speaker = phrase["speaker"] as? Int
+
+            return BatchSegment(
+                startTime: TimeInterval(offsetMs) / 1000.0,
+                endTime: TimeInterval(offsetMs + durationMs) / 1000.0,
+                text: text,
+                confidence: confidence,
+                speaker: speaker
             )
         }
 
@@ -146,7 +189,7 @@ final class BatchReTranscriber: ObservableObject {
         await writeResults(to: sessionFolder)
 
         status = .complete(segmentCount: collectedSegments.count)
-        print("[Batch] re-transcription complete: \(collectedSegments.count) segments")
+        print("[Batch] Fast Transcription complete: \(collectedSegments.count) segments, speakers detected: \(uniqueSpeakerCount)")
     }
 
     /// The batch transcript as a single string.
@@ -156,6 +199,14 @@ final class BatchReTranscriber: ObservableObject {
 
     /// Segment count from the last batch run.
     var segmentCount: Int { collectedSegments.count }
+
+    /// Number of unique speakers detected.
+    var uniqueSpeakerCount: Int {
+        Set(collectedSegments.compactMap(\.speaker)).count
+    }
+
+    /// Segments with speaker labels for UI display.
+    var segments: [BatchSegment] { collectedSegments }
 
     // MARK: - File I/O
 
@@ -174,66 +225,5 @@ final class BatchReTranscriber: ObservableObject {
         let content = lines.joined(separator: "\n") + (lines.isEmpty ? "" : "\n")
         try? content.write(to: url, atomically: true, encoding: .utf8)
         print("[Batch] wrote \(lines.count) segments to transcript.batch.jsonl")
-    }
-
-    // MARK: - Audio Loading
-
-    private func loadAudioAs16kMono(url: URL) async -> [Float]? {
-        let asset = AVURLAsset(url: url)
-
-        guard let reader: AVAssetReader = try? AVAssetReader(asset: asset) else { return nil }
-
-        guard let track = try? await asset.loadTracks(withMediaType: .audio).first else { return nil }
-
-        let outputSettings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: 16_000,
-            AVNumberOfChannelsKey: 1,
-            AVLinearPCMBitDepthKey: 32,
-            AVLinearPCMIsFloatKey: true,
-            AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsNonInterleaved: false
-        ]
-
-        let output = AVAssetReaderTrackOutput(track: track, outputSettings: outputSettings)
-        reader.add(output)
-
-        guard reader.startReading() else {
-            print("[Batch] failed to start reading: \(reader.error?.localizedDescription ?? "unknown")")
-            return nil
-        }
-
-        var samples: [Float] = []
-        samples.reserveCapacity(16_000 * 60 * 30) // Pre-allocate for ~30 min
-
-        while let buffer = output.copyNextSampleBuffer() {
-            guard let blockBuffer = CMSampleBufferGetDataBuffer(buffer) else { continue }
-            let length = CMBlockBufferGetDataLength(blockBuffer)
-            var data = Data(count: length)
-            data.withUnsafeMutableBytes { ptr in
-                CMBlockBufferCopyDataBytes(blockBuffer, atOffset: 0, dataLength: length, destination: ptr.baseAddress!)
-            }
-            // Convert Data to [Float]
-            let floatCount = length / MemoryLayout<Float>.size
-            let floats = data.withUnsafeBytes { ptr in
-                Array(ptr.bindMemory(to: Float.self).prefix(floatCount))
-            }
-            samples.append(contentsOf: floats)
-        }
-
-        return samples.isEmpty ? nil : samples
-    }
-}
-
-// MARK: - Segment Collector
-
-/// Thread-safe collector for segments arriving from the WebSocket callback.
-@MainActor
-private final class SegmentCollector {
-    var segments: [STTSegment] = []
-
-    func add(_ segment: STTSegment) {
-        guard segment.isFinal, !segment.text.isEmpty else { return }
-        segments.append(segment)
     }
 }
