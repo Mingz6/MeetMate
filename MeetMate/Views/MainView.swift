@@ -91,8 +91,12 @@ struct MainView: View {
             }
 
             // Provider status bar
-            ProviderStatusBar(llm: llm)
-                .padding(.horizontal)
+            HStack(spacing: 12) {
+                ProviderStatusBar(llm: llm)
+                Divider().frame(height: 12)
+                STTStatusIndicator(mode: transcriber.sttMode, vadSavings: transcriber.vadGate.savingsRatio)
+            }
+            .padding(.horizontal)
 
             HStack(spacing: 16) {
                 if showLive || showPolished {
@@ -143,13 +147,31 @@ struct MainView: View {
             Text("This will permanently delete the recording, transcript, and all session files.")
         }
         .task {
+            // Configure cloud STT from Keychain
+            let speechRegion = KeychainHelper.get(forKey: KeychainHelper.azureSpeechRegionKey) ?? ""
+            let speechKey = KeychainHelper.get(forKey: KeychainHelper.azureSpeechKeyKey) ?? ""
+            if !speechRegion.isEmpty && !speechKey.isEmpty {
+                transcriber.configureCloudSTT(region: speechRegion, apiKey: speechKey)
+            }
+
+            // Load local Whisper model (fallback or primary if no cloud STT)
             do {
                 try await transcriber.loadModel()
             } catch {
                 print("[Whisper] loadModel failed:", error)
-                loadError = "Whisper: \(error.localizedDescription)"
+                // Non-fatal if cloud STT is configured
+                if speechRegion.isEmpty || speechKey.isEmpty {
+                    loadError = "Whisper: \(error.localizedDescription)"
+                }
             }
-            // Load local model as fallback — non-fatal if cloud is configured
+
+            // Resolve STT mode based on what's available
+            transcriber.resolveMode(
+                networkAvailable: llm.reachability.isNetworkAvailable,
+                cloudAvailable: llm.reachability.isCloudAvailable
+            )
+
+            // Load local LLM model as fallback — non-fatal if cloud is configured
             do {
                 let override = UserDefaults.standard.string(forKey: "modelChoiceOverride") ?? ""
                 let choice = LLMService.ModelChoice(rawValue: override)
@@ -220,6 +242,11 @@ struct MainView: View {
                 sessionStorage = nil
                 return
             }
+            // Start cloud STT if in cloud mode
+            if transcriber.sttMode == .cloud {
+                await transcriber.startCloudRecognition()
+            }
+
             // Wire context provider into consumers
             let ctxProvider: () -> String = { [weak contextService] in contextService?.combinedContext ?? "" }
             polisher.contextProvider = ctxProvider
@@ -247,6 +274,11 @@ struct MainView: View {
         polisher.stop()
         replier.stopWatching()
         currentMeeting?.endedAt = .now
+
+        // Stop cloud STT
+        Task {
+            await transcriber.stopCloudRecognition()
+        }
 
         // Final flush — write latest polished + cheatsheet, close audio files
         if let storage = sessionStorage {

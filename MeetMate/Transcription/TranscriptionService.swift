@@ -25,19 +25,25 @@ enum WhisperModelTier {
 
 /// Streaming transcription with sliding-window + confirmed/unconfirmed segments.
 ///
-/// Algorithm (mirrors WhisperKit's `AudioStreamTranscriber` and the OpenAI/Deepgram/AssemblyAI
-/// real-time pattern):
-/// 1. Mic + system audio is downsampled to 16 kHz mono and appended to a rolling sample buffer.
-/// 2. Every ~1.5s a background loop runs `whisperKit.transcribe` on the buffer with
-///    `clipTimestamps: [lastConfirmedSec]` so Whisper only re-decodes the un-confirmed tail.
-/// 3. Returned segments are split: all but the last `requiredForConfirmation` (=2) are
-///    promoted to `confirmedTranscript` (immutable), the trailing 2 stay in `unconfirmedText`
-///    (will be re-emitted next cycle and may shift as more audio arrives — the live "interim" feel).
-/// 4. Once a segment confirms, `lastConfirmedSec` advances so the next decode starts there.
-/// 5. Buffer is purged when it grows past 90s; confirmed pointer + a `purgedDurationSec` offset
-///    keep absolute time consistent.
+/// Supports two STT backends:
+/// - **Cloud** (Azure AI Speech): streams audio over WebSocket, receives partial/final results.
+///   Client-side VAD gate filters silence before sending (saves cost).
+/// - **Local** (WhisperKit): sliding-window transcription on-device.
+///
+/// The public interface (`liveTranscript`, `confirmedTranscript`, `unconfirmedText`, `segments`)
+/// is the same regardless of backend — consumers don't know or care which is active.
 @MainActor
 final class TranscriptionService: ObservableObject {
+
+    // MARK: - STT Mode
+
+    enum STTMode: String {
+        case cloud       // Azure AI Speech via WebSocket
+        case local       // WhisperKit on-device
+        case recordingOnly  // No STT — audio still saved to disk
+    }
+
+    @Published private(set) var sttMode: STTMode = .local
     @Published private(set) var liveTranscript: String = ""
     @Published private(set) var confirmedTranscript: String = ""
     @Published private(set) var unconfirmedText: String = ""
@@ -46,6 +52,18 @@ final class TranscriptionService: ObservableObject {
 
     /// Set by the view layer before starting. Segments flush to disk on confirm.
     var sessionStorage: SessionStorage?
+
+    // MARK: - Cloud STT
+
+    private var cloudSTT: AzureSpeechSTT?
+    let vadGate = VADGate()
+
+    /// Total seconds of audio sent to cloud STT this session.
+    var cloudAudioSecondsSent: Float { cloudSTT?.totalAudioSecondsSent ?? 0 }
+
+    // MARK: - Local WhisperKit
+
+    // MARK: - Local WhisperKit
 
     private var whisperKit: WhisperKit?
 
@@ -69,6 +87,28 @@ final class TranscriptionService: ObservableObject {
 
     init() {}
 
+    // MARK: - Mode Resolution
+
+    /// Configure cloud STT. Call before starting recording.
+    func configureCloudSTT(region: String, apiKey: String, language: String = "en-US") {
+        cloudSTT = AzureSpeechSTT(region: region, apiKey: apiKey, language: language)
+    }
+
+    /// Resolve which STT mode to use based on configuration and network.
+    func resolveMode(networkAvailable: Bool, cloudAvailable: Bool) {
+        if let cloud = cloudSTT, cloud.isConfigured, networkAvailable, cloudAvailable {
+            sttMode = .cloud
+            modelStatus = "cloud ready"
+        } else if whisperKit != nil {
+            sttMode = .local
+            modelStatus = "ready"
+        } else {
+            sttMode = .recordingOnly
+            modelStatus = "recording only"
+        }
+        print("[STT] mode resolved: \(sttMode.rawValue)")
+    }
+
     func loadModel() async throws {
         let modelName = WhisperModelTier.recommendedModelName()
         print("[Whisper] loading model \(modelName) (first run downloads model files)…")
@@ -91,9 +131,82 @@ final class TranscriptionService: ObservableObject {
     func ingest(_ buffer: AVAudioPCMBuffer) {
         if meetingStartTime == nil { meetingStartTime = Date() }
         guard let downs = downsampleToMono16k(buffer) else { return }
-        samples.append(contentsOf: downs)
-        if streamTask == nil, whisperKit != nil {
-            startStreamLoop()
+
+        switch sttMode {
+        case .cloud:
+            // VAD gate filters silence before sending to cloud
+            if let passed = vadGate.process(downs) {
+                Task { [weak self] in
+                    await self?.cloudSTT?.ingestAudio(passed)
+                }
+            }
+        case .local:
+            samples.append(contentsOf: downs)
+            if streamTask == nil, whisperKit != nil {
+                startStreamLoop()
+            }
+        case .recordingOnly:
+            break // Audio is still captured by AudioCaptureService — no STT
+        }
+    }
+
+    /// Start cloud continuous recognition. Call after configuring cloud STT.
+    func startCloudRecognition() async {
+        guard sttMode == .cloud, let cloud = cloudSTT else { return }
+        vadGate.reset()
+
+        do {
+            try await cloud.startContinuousRecognition(
+                onSegment: { [weak self] segment in
+                    Task { @MainActor [weak self] in
+                        self?.handleCloudSegment(segment)
+                    }
+                },
+                onError: { [weak self] error in
+                    Task { @MainActor [weak self] in
+                        print("[STT Cloud] error: \(error)")
+                        // Fall back to local if available
+                        if self?.whisperKit != nil {
+                            self?.sttMode = .local
+                            self?.modelStatus = "ready (fallback)"
+                            print("[STT] fell back to local WhisperKit")
+                        } else {
+                            self?.sttMode = .recordingOnly
+                            self?.modelStatus = "recording only"
+                        }
+                    }
+                }
+            )
+        } catch {
+            print("[STT Cloud] start failed: \(error)")
+            // Fall back to local
+            if whisperKit != nil {
+                sttMode = .local
+                modelStatus = "ready (fallback)"
+            } else {
+                sttMode = .recordingOnly
+                modelStatus = "recording only"
+            }
+        }
+    }
+
+    /// Stop cloud recognition.
+    func stopCloudRecognition() async {
+        await cloudSTT?.stopContinuousRecognition()
+    }
+
+    private func handleCloudSegment(_ segment: STTSegment) {
+        if segment.isFinal {
+            let text = stripNoise(segment.text)
+            guard !text.isEmpty else { return }
+            appendConfirmed(text: text, startSec: segment.startSec, endSec: segment.endSec)
+            lastConfirmedSec = segment.endSec
+            unconfirmedText = ""
+            updateLive()
+        } else {
+            let text = stripNoise(segment.text)
+            unconfirmedText = text
+            updateLive()
         }
     }
 
@@ -111,6 +224,12 @@ final class TranscriptionService: ObservableObject {
         sessionStorage = nil
         streamTask?.cancel()
         streamTask = nil
+        vadGate.reset()
+
+        // Stop cloud STT if running
+        Task { [weak self] in
+            await self?.cloudSTT?.stopContinuousRecognition()
+        }
     }
 
     private func startStreamLoop() {

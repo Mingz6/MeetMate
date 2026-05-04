@@ -11,6 +11,11 @@ struct SettingsView: View {
     @State private var azureAPIKey: String = ""
     @State private var azureConfigured = false
 
+    // Azure Speech fields
+    @State private var speechRegion: String = ""
+    @State private var speechAPIKey: String = ""
+    @State private var speechConfigured = false
+
     private var recommended: LLMService.ModelChoice { LLMService.recommendedModel() }
 
     var body: some View {
@@ -57,6 +62,43 @@ struct SettingsView: View {
                     .font(.caption)
             }
 
+            // MARK: - Azure Speech
+            Section {
+                TextField("Region", text: $speechRegion, prompt: Text("eastus"))
+                SecureField("API key", text: $speechAPIKey, prompt: Text("••••••••"))
+
+                HStack {
+                    if speechConfigured {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        Text("Configured")
+                            .foregroundColor(.secondary)
+                    } else {
+                        Image(systemName: "xmark.circle")
+                            .foregroundColor(.orange)
+                        Text("Not configured — using local WhisperKit")
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button("Save to Keychain") {
+                        saveSpeechConfig()
+                    }
+                    .disabled(speechRegion.isEmpty || speechAPIKey.isEmpty)
+
+                    if speechConfigured {
+                        Button("Clear") {
+                            clearSpeechConfig()
+                        }
+                        .foregroundColor(.red)
+                    }
+                }
+            } header: {
+                Text("Azure AI Speech (cloud STT)")
+            } footer: {
+                Text("Cloud transcription — faster and more accurate than local. Same Azure resource as OpenAI recommended. Audio is streamed to Azure for recognition.")
+                    .font(.caption)
+            }
+
             // MARK: - Local model (fallback)
             Section {
                 Picker("Model", selection: $modelOverride) {
@@ -79,7 +121,10 @@ struct SettingsView: View {
         }
         .padding()
         .frame(minWidth: 480, minHeight: 400)
-        .onAppear { loadAzureConfig() }
+        .onAppear {
+            loadAzureConfig()
+            loadSpeechConfig()
+        }
     }
 
     // MARK: - Keychain helpers
@@ -106,5 +151,27 @@ struct SettingsView: View {
         azureDeployment = ""
         azureAPIKey = ""
         azureConfigured = false
+    }
+
+    // MARK: - Speech Keychain helpers
+
+    private func loadSpeechConfig() {
+        speechRegion = KeychainHelper.get(forKey: KeychainHelper.azureSpeechRegionKey) ?? ""
+        speechAPIKey = KeychainHelper.get(forKey: KeychainHelper.azureSpeechKeyKey) ?? ""
+        speechConfigured = !speechRegion.isEmpty && !speechAPIKey.isEmpty
+    }
+
+    private func saveSpeechConfig() {
+        KeychainHelper.set(speechRegion, forKey: KeychainHelper.azureSpeechRegionKey)
+        KeychainHelper.set(speechAPIKey, forKey: KeychainHelper.azureSpeechKeyKey)
+        speechConfigured = true
+    }
+
+    private func clearSpeechConfig() {
+        KeychainHelper.delete(forKey: KeychainHelper.azureSpeechRegionKey)
+        KeychainHelper.delete(forKey: KeychainHelper.azureSpeechKeyKey)
+        speechRegion = ""
+        speechAPIKey = ""
+        speechConfigured = false
     }
 }
