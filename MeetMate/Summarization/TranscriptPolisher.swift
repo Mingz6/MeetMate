@@ -1,31 +1,44 @@
 import Foundation
 import Combine
 
-/// Periodically polishes raw Whisper output into coherent paragraphs.
+/// Periodically polishes raw Whisper output into coherent paragraphs with stable IDs and timestamps.
 ///
 /// Each cycle:
 /// - Reads new segments since `cursor` from `TranscriptionService`.
-/// - Sends (current draft + new raw fragments) to the LLM.
-/// - LLM returns JSON: `{ "finalized": [...], "draft": "..." }`.
-///   - `finalized` = complete coherent thoughts/paragraphs (immutable, appended to history).
-///   - `draft` = trailing in-progress thought (replaced each cycle).
+/// - Sends (current draft + new raw fragments with timestamps) to the LLM.
+/// - LLM returns JSON with finalized paragraphs and a draft.
+/// - Swift assigns stable paragraph IDs (never the LLM) and maps timestamps from source segments.
 ///
-/// Why: gives you scroll-back text you can quote — "you said X, explain why" — instead of fragmented chunks.
+/// Contract:
+/// ```json
+/// {
+///   "finalized": [
+///     {"text": "...", "sourceStart": 0, "sourceEnd": 2}
+///   ],
+///   "draft": "trailing in-progress thought"
+/// }
+/// ```
+/// `sourceStart`/`sourceEnd` are indices into the numbered source segments (0-based).
+/// Swift uses these to derive `startSec`/`endSec` from the original transcript timestamps.
 @MainActor
 final class TranscriptPolisher: ObservableObject {
-    @Published private(set) var finalizedParagraphs: [String] = []
+    @Published private(set) var paragraphs: [PolishedParagraph] = []
     @Published private(set) var currentDraft: String = ""
     @Published private(set) var isPolishing = false
 
+    /// Legacy accessor for backward compat — just the text of finalized paragraphs.
+    var finalizedParagraphs: [String] { paragraphs.map(\.text) }
+
     /// Convenience: full polished view (history + draft).
     var polishedTranscript: String {
-        let history = finalizedParagraphs.joined(separator: "\n\n")
+        let history = paragraphs.map { "\($0.timestampLabel) \($0.text)" }.joined(separator: "\n\n")
         if currentDraft.isEmpty { return history }
         if history.isEmpty { return currentDraft }
         return history + "\n\n" + currentDraft
     }
 
     private let llm: LLMService
+    private let idGenerator = ParagraphIDGenerator()
     private weak var transcriber: TranscriptionService?
     private var task: Task<Void, Never>?
     private var cursor: Int = 0
@@ -48,8 +61,9 @@ final class TranscriptPolisher: ObservableObject {
         sessionToken &+= 1
         self.transcriber = transcriber
         cursor = 0
-        finalizedParagraphs = []
+        paragraphs = []
         currentDraft = ""
+        idGenerator.reset()
         task = Task { [weak self] in
             guard let self else { return }
             while !self.llm.isLoaded {
@@ -78,7 +92,13 @@ final class TranscriptPolisher: ObservableObject {
         guard all.count - cursor >= minSegmentsToPolish else { return }
 
         let pending = Array(all[cursor..<all.count])
-        let raw = pending.map(\.text).joined(separator: " ")
+
+        // Build numbered segment list with timestamps for the LLM
+        let numberedSegments = pending.enumerated().map { idx, seg in
+            let startStr = formatTime(seg.startTime)
+            let endStr = formatTime(seg.endTime)
+            return "[\(idx)] (\(startStr)–\(endStr)) \(seg.text)"
+        }.joined(separator: "\n")
 
         let contextBlock: String
         if let ctx = contextProvider?(), !ctx.isEmpty {
@@ -88,31 +108,34 @@ final class TranscriptPolisher: ObservableObject {
         }
 
         let prompt = """
-        You are an editor turning a clean live meeting transcript into the kind of polished paragraphs that would appear in published notes or a transcript article.
+        You are an editor turning a live meeting transcript into polished paragraphs.
         \(contextBlock)Your job is to REWRITE, not just split.
 
         Rules:
         - Fix grammar, punctuation, and capitalization.
         - Merge short fragments into proper sentences.
         - Group related sentences into paragraphs (2–5 sentences each).
-        - Light paraphrasing for clarity is allowed; preserve the speaker's meaning, technical terms, and named entities exactly.
+        - Light paraphrasing for clarity is allowed; preserve meaning, technical terms, and named entities exactly.
         - Keep the speaker's voice (first person if they used it).
         - DO NOT add facts the speaker didn't say.
         - DO NOT copy the input verbatim — if a paragraph reads like raw transcript, rewrite it.
-        - Distinguish FINALIZED (the speaker has clearly moved on from this topic — safe to lock in) from DRAFT (the trailing thought they're still developing).
-        - The draft will be re-edited next cycle, so prefer leaving the most recent 1–2 sentences in draft.
+        - Each finalized paragraph must specify which source segments it covers (sourceStart and sourceEnd, 0-based inclusive indices into the numbered list below).
+        - Distinguish FINALIZED (speaker has moved on) from DRAFT (trailing thought still developing).
+        - Prefer leaving the most recent 1–2 sentences in draft.
 
         Output ONLY this JSON, no markdown fences, no commentary:
         {
-          "finalized": ["polished paragraph 1", "polished paragraph 2"],
-          "draft": "trailing in-progress thought as a single string, or empty string"
+          "finalized": [
+            {"text": "polished paragraph", "sourceStart": 0, "sourceEnd": 3}
+          ],
+          "draft": "trailing in-progress thought or empty string"
         }
 
-        Previous draft (continue refining this — it may end up in finalized this cycle):
+        Previous draft (continue refining — may become finalized):
         \(currentDraft.isEmpty ? "(none)" : currentDraft)
 
-        New raw transcript to incorporate:
-        \(raw)
+        New source segments (numbered with timestamps):
+        \(numberedSegments)
         /no_think
         """
 
@@ -120,7 +143,7 @@ final class TranscriptPolisher: ObservableObject {
         defer { isPolishing = false }
         let token = sessionToken
         do {
-            let response = try await llm.generate(prompt: prompt, maxTokens: 1200)
+            let response = try await llm.generate(prompt: prompt, maxTokens: 1500)
             guard token == sessionToken, !Task.isCancelled else {
                 print("[Polish] dropping stale result from prior session")
                 return
@@ -130,10 +153,35 @@ final class TranscriptPolisher: ObservableObject {
                 return
             }
 
-            let newFinals = parsed.finalized.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            if !newFinals.isEmpty {
-                finalizedParagraphs.append(contentsOf: newFinals)
-                print("[Polish] +\(newFinals.count) paragraph(s), draft: \(parsed.draft.prefix(60))…")
+            // Assign stable IDs and map timestamps from source segments
+            var newParagraphs: [PolishedParagraph] = []
+            for item in parsed.finalized {
+                let text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { continue }
+
+                let startIdx = max(0, min(item.sourceStart, pending.count - 1))
+                let endIdx = max(startIdx, min(item.sourceEnd, pending.count - 1))
+                let startSec = Float(pending[startIdx].startTime)
+                let endSec = Float(pending[endIdx].endTime)
+
+                let para = PolishedParagraph(
+                    id: idGenerator.next(),
+                    text: text,
+                    startSec: startSec,
+                    endSec: endSec,
+                    version: 1
+                )
+                newParagraphs.append(para)
+            }
+
+            if !newParagraphs.isEmpty {
+                paragraphs.append(contentsOf: newParagraphs)
+                print("[Polish] +\(newParagraphs.count) paragraph(s), draft: \(parsed.draft.prefix(60))…")
+
+                // Persist each new paragraph
+                for para in newParagraphs {
+                    sessionStorage?.appendParagraph(para)
+                }
             } else if !parsed.draft.isEmpty {
                 print("[Polish] draft updated: \(parsed.draft.prefix(80))…")
             }
@@ -146,8 +194,14 @@ final class TranscriptPolisher: ObservableObject {
         }
     }
 
+    private struct FinalizedItem {
+        let text: String
+        let sourceStart: Int
+        let sourceEnd: Int
+    }
+
     private struct PolishResponse {
-        let finalized: [String]
+        let finalized: [FinalizedItem]
         let draft: String
     }
 
@@ -157,14 +211,37 @@ final class TranscriptPolisher: ObservableObject {
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil
         }
-        let finalized = (obj["finalized"] as? [String]) ?? []
+
         let draft = (obj["draft"] as? String) ?? ""
-        return PolishResponse(finalized: finalized, draft: draft)
+        var items: [FinalizedItem] = []
+
+        if let finalized = obj["finalized"] as? [[String: Any]] {
+            for entry in finalized {
+                let text = (entry["text"] as? String) ?? ""
+                let sourceStart = (entry["sourceStart"] as? Int) ?? 0
+                let sourceEnd = (entry["sourceEnd"] as? Int) ?? sourceStart
+                items.append(FinalizedItem(text: text, sourceStart: sourceStart, sourceEnd: sourceEnd))
+            }
+        } else if let finalized = obj["finalized"] as? [String] {
+            // Fallback: LLM returned plain strings (no source indices) — assign full range
+            for text in finalized {
+                items.append(FinalizedItem(text: text, sourceStart: 0, sourceEnd: 0))
+            }
+        }
+
+        return PolishResponse(finalized: items, draft: draft)
     }
 
     private func extractJSON(from text: String) -> String? {
         guard let start = text.firstIndex(of: "{"),
               let end = text.lastIndex(of: "}"), start < end else { return nil }
         return String(text[start...end])
+    }
+
+    private func formatTime(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds)
+        let min = total / 60
+        let sec = total % 60
+        return String(format: "%02d:%02d", min, sec)
     }
 }

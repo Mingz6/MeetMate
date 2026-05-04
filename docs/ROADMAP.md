@@ -70,14 +70,14 @@ Cloud is the new default. When the network is gone, MeetMate keeps capturing aud
 
 Critical: this builds the contract that #6 re-polish will mutate. Get the IDs right the first time so #6 doesn't force a second contract migration.
 
-- [ ] Pass Whisper segment timestamps through to the polish prompt
-- [ ] Polish JSON contract: `{"finalized": [{"id": "p_000123", "text": "...", "startSec": 12.3, "endSec": 18.7, "version": 1}], "draft": "..."}`
-- [ ] **Stable IDs assigned by Swift**, not the LLM (LLMs forget IDs across calls). Format `p_{6-digit zero-padded}`, monotonic per session, never reused.
-- [ ] **Version field** ships in #5 even though it stays at 1 until #6. Avoids contract migration later.
-- [ ] Persist `paragraphs.jsonl` (one paragraph per line, append-only) alongside `polished.md`
-- [ ] Render `[mm:ss]` prefix in the polished pane
-- [ ] Click a timestamp → seek the saved audio file (needs audio playback UI)
-- [ ] Backfill: when polisher merges 6 segments into 2 paragraphs, take start of first + end of last
+- [x] Pass Whisper segment timestamps through to the polish prompt
+- [x] Polish JSON contract: `{"finalized": [{"id": "p_000123", "text": "...", "startSec": 12.3, "endSec": 18.7, "version": 1}], "draft": "..."}`
+- [x] **Stable IDs assigned by Swift**, not the LLM (LLMs forget IDs across calls). Format `p_{6-digit zero-padded}`, monotonic per session, never reused.
+- [x] **Version field** ships in #5 even though it stays at 1 until #6. Avoids contract migration later.
+- [x] Persist `paragraphs.jsonl` (one paragraph per line, append-only) alongside `polished.md`
+- [x] Render `[mm:ss]` prefix in the polished pane
+- [x] Click a timestamp → seek the saved audio file (needs audio playback UI)
+- [x] Backfill: when polisher merges 6 segments into 2 paragraphs, take start of first + end of last
 
 ### 6. Retroactive re-polish
 

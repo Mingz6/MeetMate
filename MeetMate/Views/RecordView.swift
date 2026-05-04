@@ -59,7 +59,7 @@ struct RecordView: View {
                         )
                     case .polished:
                         PolishedTranscriptView(
-                            finalizedParagraphs: polisher.finalizedParagraphs,
+                            paragraphs: polisher.paragraphs,
                             currentDraft: polisher.currentDraft,
                             rawFallback: transcriber.liveTranscript
                         )
