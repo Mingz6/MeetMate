@@ -25,6 +25,7 @@ struct MainView: View {
     @State private var showDeleteConfirm = false
     @StateObject private var contextService = ContextService()
     @State private var showContext = false
+    @State private var batchReTranscriber: BatchReTranscriber?
 
     init() {
         let llmInstance = LLMService()
@@ -97,6 +98,12 @@ struct MainView: View {
                 STTStatusIndicator(mode: transcriber.sttMode, vadSavings: transcriber.vadGate.savingsRatio)
             }
             .padding(.horizontal)
+
+            // Batch re-transcription status
+            if let batch = batchReTranscriber {
+                BatchReTranscriptionBanner(batch: batch, onAccept: acceptBatchTranscript, onDismiss: dismissBatchTranscript)
+                    .padding(.horizontal)
+            }
 
             HStack(spacing: 16) {
                 if showLive || showPolished {
@@ -244,7 +251,12 @@ struct MainView: View {
             }
             // Start cloud STT if in cloud mode
             if transcriber.sttMode == .cloud {
+                // Inject vocabulary for phrase list biasing
+                transcriber.vocabularyTerms = contextService.mergedVocabulary
                 await transcriber.startCloudRecognition()
+            } else {
+                // For local mode, set vocabulary for WhisperKit prompt conditioning
+                transcriber.vocabularyTerms = contextService.mergedVocabulary
             }
 
             // Wire context provider into consumers
@@ -290,11 +302,48 @@ struct MainView: View {
                 actions: cheatsheet.current.actionItems
             )
             storage.finalizeAudio()
+
+            // Queue batch re-transcription if cloud STT was active
+            startBatchReTranscription(sessionFolder: storage.sessionFolder)
         }
 
         transcriber.sessionStorage = nil
         polisher.sessionStorage = nil
         cheatsheet.sessionStorage = nil
+    }
+
+    private func startBatchReTranscription(sessionFolder: URL) {
+        let speechRegion = KeychainHelper.get(forKey: KeychainHelper.azureSpeechRegionKey) ?? ""
+        let speechKey = KeychainHelper.get(forKey: KeychainHelper.azureSpeechKeyKey) ?? ""
+        guard !speechRegion.isEmpty, !speechKey.isEmpty else { return }
+
+        let retranscriber = BatchReTranscriber(region: speechRegion, apiKey: speechKey)
+        self.batchReTranscriber = retranscriber
+        let vocabulary = contextService.mergedVocabulary
+
+        Task {
+            await retranscriber.reTranscribe(sessionFolder: sessionFolder, vocabulary: vocabulary)
+        }
+    }
+
+    private func acceptBatchTranscript() {
+        guard let batch = batchReTranscriber else { return }
+        let batchText = batch.batchTranscriptText
+        guard !batchText.isEmpty else {
+            batchReTranscriber = nil
+            return
+        }
+        // Replace the live transcript with the batch version
+        // The batch file (transcript.batch.jsonl) is already persisted
+        // Update the in-memory confirmed transcript for display
+        transcriber.replaceConfirmedTranscript(with: batchText)
+        batchReTranscriber = nil
+        print("[Batch] user accepted improved transcript")
+    }
+
+    private func dismissBatchTranscript() {
+        batchReTranscriber = nil
+        print("[Batch] user kept original transcript")
     }
 
     private func showInFinder() {

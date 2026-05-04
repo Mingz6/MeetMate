@@ -32,6 +32,9 @@ final class AzureSpeechSTT: @unchecked Sendable {
     /// Track total audio seconds sent for cost metering.
     private(set) var totalAudioSecondsSent: Float = 0
 
+    /// Phrase list for vocabulary biasing. Set before calling startContinuousRecognition.
+    var phraseList: [String] = []
+
     // MARK: - Init
 
     init(region: String, apiKey: String, language: String = "en-US") {
@@ -78,6 +81,11 @@ final class AzureSpeechSTT: @unchecked Sendable {
 
         // Send speech.config message
         try await sendSpeechConfig()
+
+        // Send phrase list if configured
+        if !phraseList.isEmpty {
+            try await sendSpeechContext()
+        }
 
         // Start receive loop
         Task { [weak self] in
@@ -172,6 +180,33 @@ final class AzureSpeechSTT: @unchecked Sendable {
 
         let message = "\(headers)\r\n\r\n\(bodyStr)"
         try await webSocket?.send(.string(message))
+    }
+
+    /// Send phrase list for vocabulary biasing via speech.context message.
+    private func sendSpeechContext() async throws {
+        let phrases = phraseList.prefix(500).map { ["text": $0] }
+        let context: [String: Any] = [
+            "phraseDetection": [
+                "mode": "Conversation"
+            ],
+            "phraseList": [
+                "phrases": phrases
+            ]
+        ]
+
+        let body = try JSONSerialization.data(withJSONObject: context)
+        let bodyStr = String(data: body, encoding: .utf8) ?? "{}"
+
+        let headers = [
+            "Path: speech.context",
+            "X-RequestId: \(requestId)",
+            "X-Timestamp: \(iso8601Timestamp())",
+            "Content-Type: application/json"
+        ].joined(separator: "\r\n")
+
+        let message = "\(headers)\r\n\r\n\(bodyStr)"
+        try await webSocket?.send(.string(message))
+        print("[AzureSpeech] sent phrase list with \(phrases.count) terms")
     }
 
     private func buildAudioHeader() -> String {

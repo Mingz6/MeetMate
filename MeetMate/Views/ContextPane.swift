@@ -80,6 +80,9 @@ struct ContextPane: View {
                 }
                 .font(.caption)
             }
+
+            // Vocabulary biasing
+            VocabularySection(contextService: contextService)
         }
         .padding()
     }
@@ -152,5 +155,141 @@ private struct PDFDropZone: View {
         }
 
         return false
+    }
+}
+
+// MARK: - Vocabulary Section
+
+private struct VocabularySection: View {
+    @ObservedObject var contextService: ContextService
+    @State private var newTerm: String = ""
+    @State private var showExtracted = false
+
+    var body: some View {
+        DisclosureGroup("Vocabulary biasing (\(contextService.mergedVocabulary.count) terms)") {
+            VStack(alignment: .leading, spacing: 8) {
+                // Add new term
+                HStack {
+                    TextField("Add term…", text: $newTerm)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { addTerm() }
+                    Button(action: addTerm) {
+                        Image(systemName: "plus.circle")
+                    }
+                    .disabled(newTerm.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+
+                // User terms (editable)
+                if !contextService.userVocabulary.isEmpty {
+                    Text("Custom terms").font(.caption2).foregroundStyle(.secondary)
+                    FlowLayout(spacing: 4) {
+                        ForEach(contextService.userVocabulary, id: \.self) { term in
+                            TermChip(term: term, isUserTerm: true) {
+                                contextService.removeVocabularyTerm(term)
+                            }
+                        }
+                    }
+                }
+
+                // Auto-extracted (read-only, collapsible)
+                let extracted = contextService.extractedVocabulary
+                if !extracted.isEmpty {
+                    DisclosureGroup("Auto-extracted (\(extracted.count))", isExpanded: $showExtracted) {
+                        FlowLayout(spacing: 4) {
+                            ForEach(extracted.prefix(30), id: \.self) { term in
+                                TermChip(term: term, isUserTerm: false, onRemove: nil)
+                            }
+                            if extracted.count > 30 {
+                                Text("+\(extracted.count - 30) more")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+                    .font(.caption2)
+                }
+            }
+        }
+        .font(.caption)
+    }
+
+    private func addTerm() {
+        contextService.addVocabularyTerm(newTerm)
+        newTerm = ""
+    }
+}
+
+// MARK: - Term Chip
+
+private struct TermChip: View {
+    let term: String
+    let isUserTerm: Bool
+    var onRemove: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 2) {
+            Text(term)
+                .font(.caption2)
+            if isUserTerm, let onRemove {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 9))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(isUserTerm ? Color.blue.opacity(0.12) : Color.secondary.opacity(0.08))
+        .clipShape(Capsule())
+    }
+}
+
+// MARK: - Flow Layout
+
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 4
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = computeRows(proposal: proposal, subviews: subviews)
+        var height: CGFloat = 0
+        for (index, row) in rows.enumerated() {
+            let rowHeight = row.map { $0.sizeThatFits(.unspecified).height }.max() ?? 0
+            height += rowHeight
+            if index < rows.count - 1 { height += spacing }
+        }
+        return CGSize(width: proposal.width ?? 0, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let rows = computeRows(proposal: proposal, subviews: subviews)
+        var y = bounds.minY
+        for row in rows {
+            let rowHeight = row.map { $0.sizeThatFits(.unspecified).height }.max() ?? 0
+            var x = bounds.minX
+            for subview in row {
+                let size = subview.sizeThatFits(.unspecified)
+                subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += rowHeight + spacing
+        }
+    }
+
+    private func computeRows(proposal: ProposedViewSize, subviews: Subviews) -> [[LayoutSubviews.Element]] {
+        let maxWidth = proposal.width ?? .infinity
+        var rows: [[LayoutSubviews.Element]] = [[]]
+        var currentWidth: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if currentWidth + size.width + spacing > maxWidth && !rows[rows.count - 1].isEmpty {
+                rows.append([])
+                currentWidth = 0
+            }
+            rows[rows.count - 1].append(subview)
+            currentWidth += size.width + spacing
+        }
+        return rows
     }
 }
