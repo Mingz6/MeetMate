@@ -352,17 +352,17 @@ struct MainView: View {
 
     private func acceptBatchTranscript() {
         guard let batch = batchReTranscriber else { return }
-        let batchText = batch.batchTranscriptText
-        guard !batchText.isEmpty else {
+        let batchSegments = batch.segments
+        guard !batchSegments.isEmpty else {
             batchReTranscriber = nil
             return
         }
-        // Replace the live transcript with the batch version
-        // The batch file (transcript.batch.jsonl) is already persisted
-        // Update the in-memory confirmed transcript for display
-        transcriber.replaceConfirmedTranscript(with: batchText)
+        // Replace live segments with batch (carries speaker IDs + better timestamps)
+        transcriber.replaceSegments(with: batchSegments)
+        // Map speaker IDs onto existing polished paragraphs by time overlap
+        polisher.applySpeakerIds(from: batchSegments)
         batchReTranscriber = nil
-        print("[Batch] user accepted improved transcript")
+        print("[Batch] user accepted improved transcript (\(batchSegments.count) segments, \(batch.uniqueSpeakerCount) speakers)")
     }
 
     private func dismissBatchTranscript() {
