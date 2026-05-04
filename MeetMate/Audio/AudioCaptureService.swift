@@ -13,18 +13,22 @@ final class AudioCaptureService: ObservableObject {
     #endif
 
     var onAudioBuffer: ((AVAudioPCMBuffer) -> Void)?
+    var onMicBuffer: ((AVAudioPCMBuffer) -> Void)?
+    var onSystemBuffer: ((AVAudioPCMBuffer) -> Void)?
 
     func start() async throws {
         var micStarted = false
         do {
             try await micCapture.start { [weak self] buffer in
                 self?.onAudioBuffer?(buffer)
+                self?.onMicBuffer?(buffer)
             }
             micStarted = true
 
             #if os(macOS)
             try await systemAudioCapture.start { [weak self] buffer in
                 self?.onAudioBuffer?(buffer)
+                self?.onSystemBuffer?(buffer)
             }
             #endif
 

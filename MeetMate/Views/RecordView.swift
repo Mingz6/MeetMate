@@ -18,6 +18,10 @@ struct RecordView: View {
     @State private var pane: Pane = .live
     @State private var startError: String?
     @State private var loadError: String?
+    @State private var sessionStorage: SessionStorage?
+    @State private var audioPlayer: AVAudioPlayer?
+    @State private var isPlaying = false
+    @State private var showDeleteConfirm = false
 
     private enum Pane: String, CaseIterable, Identifiable {
         case live = "Live"
@@ -78,6 +82,18 @@ struct RecordView: View {
                             .disabled(transcriber.confirmedTranscript.isEmpty)
                         ShareLink(item: transcriber.confirmedTranscript)
                             .disabled(transcriber.confirmedTranscript.isEmpty)
+
+                        if !audio.isRecording, currentMeeting != nil {
+                            Divider()
+                            Button("Play mic recording", systemImage: isPlaying ? "pause.circle" : "play.circle") {
+                                togglePlayback()
+                            }
+                            .disabled(!(currentMeeting?.hasSessionFolder ?? false))
+
+                            Button("Delete meeting", systemImage: "trash", role: .destructive) {
+                                showDeleteConfirm = true
+                            }
+                        }
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
@@ -90,6 +106,12 @@ struct RecordView: View {
         .alert("Model failed to load", isPresented: Binding(get: { loadError != nil }, set: { if !$0 { loadError = nil } })) {
             Button("OK", role: .cancel) { loadError = nil }
         } message: { Text(loadError ?? "") }
+        .confirmationDialog("Delete this meeting?", isPresented: $showDeleteConfirm) {
+            Button("Delete meeting & files", role: .destructive) { deleteMeeting() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will permanently delete the recording, transcript, and all session files.")
+        }
         .task {
             do {
                 try await transcriber.loadModel()
@@ -117,15 +139,37 @@ struct RecordView: View {
     }
 
     private func startMeeting() {
-        let meeting = Meeting(title: "Meeting \(Date().formatted(date: .abbreviated, time: .shortened))")
+        let now = Date()
+        let meeting = Meeting(title: "Meeting \(now.formatted(date: .abbreviated, time: .shortened))", startedAt: now)
         context.insert(meeting)
         currentMeeting = meeting
         transcriber.reset()
+        isPlaying = false
+        audioPlayer = nil
+
+        var storage: SessionStorage?
+        do {
+            storage = try SessionStorage(startedAt: now, isSystemAudioAvailable: false)
+            sessionStorage = storage
+            transcriber.sessionStorage = storage
+            polisher.sessionStorage = storage
+            cheatsheet.sessionStorage = storage
+        } catch {
+            print("[Meeting] failed to create session storage:", error)
+        }
 
         audio.onAudioBuffer = { [weak transcriber] buffer in
             Task { @MainActor in
                 transcriber?.ingest(buffer)
             }
+        }
+
+        if let writer = storage {
+            audio.onMicBuffer = { [weak writer] buffer in
+                writer?.writeMicBuffer(buffer)
+            }
+        } else {
+            audio.onMicBuffer = nil
         }
 
         Task {
@@ -136,6 +180,7 @@ struct RecordView: View {
                 startError = error.localizedDescription
                 context.delete(meeting)
                 currentMeeting = nil
+                sessionStorage = nil
                 return
             }
             cheatsheet.startRolling { transcriber.liveTranscript }
@@ -148,12 +193,55 @@ struct RecordView: View {
         cheatsheet.stopRolling()
         polisher.stop()
         currentMeeting?.endedAt = .now
+
+        if let storage = sessionStorage {
+            storage.writePolished(paragraphs: polisher.finalizedParagraphs, draft: polisher.currentDraft)
+            storage.writeCheatsheet(
+                topic: cheatsheet.current.currentTopic,
+                keyPoints: cheatsheet.current.keyPoints,
+                questions: cheatsheet.current.openQuestions,
+                actions: cheatsheet.current.actionItems
+            )
+            storage.finalizeAudio()
+        }
+
+        transcriber.sessionStorage = nil
+        polisher.sessionStorage = nil
+        cheatsheet.sessionStorage = nil
     }
 
     private func copyTranscript() {
         let text = transcriber.confirmedTranscript
         guard !text.isEmpty else { return }
         UIPasteboard.general.string = text
+    }
+
+    private func togglePlayback() {
+        if let player = audioPlayer, player.isPlaying {
+            player.pause()
+            isPlaying = false
+            return
+        }
+
+        if audioPlayer == nil, let meeting = currentMeeting {
+            let micURL = meeting.sessionFolderURL.appendingPathComponent("mic.m4a")
+            guard FileManager.default.fileExists(atPath: micURL.path) else { return }
+            audioPlayer = try? AVAudioPlayer(contentsOf: micURL)
+            audioPlayer?.prepareToPlay()
+        }
+
+        audioPlayer?.play()
+        isPlaying = audioPlayer?.isPlaying ?? false
+    }
+
+    private func deleteMeeting() {
+        guard let meeting = currentMeeting else { return }
+        try? FileManager.default.removeItem(at: meeting.sessionFolderURL)
+        context.delete(meeting)
+        currentMeeting = nil
+        sessionStorage = nil
+        audioPlayer = nil
+        isPlaying = false
     }
 }
 

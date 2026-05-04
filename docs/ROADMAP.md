@@ -16,15 +16,18 @@ Captured from the 2026-04-22 paper-reading meeting where the live transcript alm
 
 By default the meeting is saved (audio + transcript + polish + cheatsheet). User can opt out per meeting via a "Don't save" toggle before recording starts.
 
-- [ ] Storage layout: `~/Library/Containers/dev.mingz.MeetMate/Data/Documents/Sessions/{YYYY-MM-DD-HHmm}/`
-- [ ] Save raw mic + system audio incrementally as `.m4a` (not held in RAM)
-- [ ] `transcript.jsonl` — confirmed Whisper segments + timestamps, flushed every N seconds
+- [ ] Storage root: `FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!.appendingPathComponent("MeetMate/Sessions")`. Resolves to `~/Documents/MeetMate/Sessions/{YYYY-MM-DD-HHmm}/` on macOS (visible in Finder, iCloud-syncable for free), and to the app sandbox Documents on iPadOS/iOS (visible in the Files app).
+- [ ] Add `NSDocumentsFolderUsageDescription` to Info.plist (macOS sandbox prompt). For iOS/iPadOS Files app visibility, set `UIFileSharingEnabled = YES` and `LSSupportsOpeningDocumentsInPlace = YES`.
+- [ ] Save **two separate audio files**: `mic.m4a` + `system.m4a` — one per source, incrementally written (not held in RAM). Two files because once mixed you can't un-mix, and §7e needs separate streams for Azure Speech. On iPadOS/iOS (mic only), only `mic.m4a` is written.
+- [ ] `transcript.jsonl` — confirmed segments + timestamps, flushed every N seconds
 - [ ] `polished.md` — append-only after each polish cycle
 - [ ] `cheatsheet.md` — snapshot per cycle
 - [ ] On crash/quit, last-saved state survives — verify with `kill -9`
 - [ ] "Show in Finder" button for the active session folder (macOS) / Files share sheet (iOS/iPadOS)
-- [ ] Update SwiftData `Meeting` to point at the session folder path
-- [ ] **Pre-record toggle**: "Save this meeting" — default ON. When OFF, write to a temp folder and delete on stop.
+- [ ] **Basic playback UI** — `AVAudioPlayer` with play/pause button + seek slider. Plays `mic.m4a` (or both files simultaneously on macOS). Needed before §5 timestamp-click-to-seek can land.
+- [ ] **Delete meeting** — swipe-to-delete or context menu on meeting list. Removes the session folder from `~/Documents/MeetMate/Sessions/` + the SwiftData `Meeting` row. Confirm prompt before deleting.
+- [ ] SwiftData `Meeting` — **derive** session folder path from `Meeting.startedAt` (format `{YYYY-MM-DD-HHmm}`), no stored path field. Rename is a nice-to-have; derive keeps the model simple.
+- [ ] **Pre-record toggle**: "Save this meeting" — default ON. When OFF, write to `FileManager.default.temporaryDirectory` and delete on stop.
 
 ### 2. Cloud LLM as primary, audio-only fallback
 
@@ -32,13 +35,15 @@ Cloud is the new default. When the network is gone, MeetMate keeps capturing aud
 
 - [ ] `LLMProvider` protocol — `AzureOpenAIProvider` (primary) + optional `LocalMLXProvider` (kept as opt-in nice-to-have for offline-by-choice users)
 - [ ] Primary cloud provider: **Azure OpenAI** (same Azure resource as AI Speech). Protocol stays open for Anthropic/Gemini later if needed.
-- [ ] Settings: Azure endpoint + deployment name + API key entry, store in **Keychain** (NOT UserDefaults)
+- [ ] Settings: Azure endpoint + deployment name + API key entry, store in **Keychain** (NOT UserDefaults). API key auth for now — Entra ID / `az login` adds too much friction for a desktop app.
+- [ ] **Region note**: deploy Azure OpenAI and AI Speech in the same region. Don't hard-pin — region choice depends on which has the latest model deployments (e.g. some regions get GPT-5 before others). Document the active region in Settings UI.
 - [ ] Per-task provider routing: polish vs cheatsheet vs reply vs re-polish can use different model tiers
 - [ ] Streaming response support (SSE) so UI stays responsive
 - [ ] **Reachability + failure handling** — 3 consecutive failures (timeout / 5xx / no network) → flip to `recordingOnly` mode, show banner: "Offline — audio + raw transcript still saving, polish paused"
 - [ ] **Replay queue** — while offline, queue polish/cheatsheet jobs to disk; drain when back online against the saved transcript
 - [ ] Manual "Pause cloud calls" toggle in UI for cost-sensitive moments
-- [ ] Cost meter — approx tokens-in/out per session
+- [ ] Cost display — exact tokens-in/out per session + estimated cost (Azure OpenAI returns `usage` in each response). Show as a running counter in the session view. Warning banner when cumulative cost exceeds a user-configurable threshold (e.g. "This session has used $X of API calls").
+- [ ] Auth pattern reference: `~/code/personal/worker-center` has a working Azure OpenAI client + Keychain storage pattern — reuse, don't re-derive.
 - [ ] Privacy disclosure in onboarding + README — "Audio is streamed to Azure AI Speech for transcription. Transcript text is sent to Azure OpenAI for polishing. Local-only mode available in Settings (slower, requires model downloads)."
 - [x] Update README — dropped "no cloud, no API keys" headline; reframed as cloud-first with offline fallbacks
 
@@ -84,24 +89,16 @@ Depends on #5 (stable IDs + version field) and #2 (cloud LLM). Re-polish never i
 - [ ] UI: strikethrough old + new text, accept/reject
 - [ ] Edit trail view — click a paragraph to see all versions
 - [ ] Test case: "I want to buy an apple. Well, banana is better." → "Speaker decided on banana over apple."
-- [ ] Bound the re-polish window (last 5 paragraphs)
+- [ ] Bound the re-polish window (last 5 paragraphs, **excluding** paragraphs newer than ~10s — those are likely still being revised by the live polisher)
 - [ ] Cloud-only — skip in `recordingOnly` mode
 
-### 7. App icon
-
-- [ ] Design icon — mic + brain or speech bubble + sparkle
-- [ ] Full icon set: 16/32/64/128/256/512/1024 @1x and @2x
-- [ ] Drop into `MeetMate/Assets.xcassets/AppIcon.appiconset/`
-- [ ] Verify in Finder + Dock + ⌘-Tab + About panel
-- [ ] Add to README screenshots
-
-### 8. Transcription quality — Azure AI Speech, VAD, offline re-transcribe pass
+### 7. Transcription quality — Azure AI Speech, VAD, offline re-transcribe pass
 
 The biggest accuracy gap today is STT, not the LLM. Live `large-v3` streaming on M3 Max throttles, hallucinates on silence, and butchers domain terms (e.g. "KV cache" → "KB cache"). Five layers fix this, all on a single provider.
 
 **Provider choice: Azure AI Speech** — same vendor as the LLM (Azure OpenAI), one resource, one auth flow, one billing line. Native Swift SDK. Live streaming + batch transcription + phrase lists + diarization all included. Local WhisperKit stays as the offline-mode fallback only — no Whisper-on-cloud second provider needed.
 
-#### 8a. Cloud STT (primary path) — Azure AI Speech
+#### 7a. Cloud STT (primary path) — Azure AI Speech
 
 - [ ] `STTProvider` protocol — mirror `LLMProvider` shape
 - [ ] Wire **Microsoft Cognitive Services Speech SDK** for Swift (`MicrosoftCognitiveServicesSpeech` xcframework)
@@ -111,9 +108,9 @@ The biggest accuracy gap today is STT, not the LLM. Live `large-v3` streaming on
 - [ ] Built-in **speaker diarization** — enable `SpeakerDiarizationEnabled` to get speaker labels for free
 - [ ] **Offline fallback**: cloud unreachable → fall back to local WhisperKit (already shipped). If user disabled local Whisper too, drop to `recordingOnly` (audio still saving).
 - [ ] Cost meter — minutes of audio sent + tokens of LLM output
-- [ ] Privacy disclosure: "Audio is streamed to Azure AI Speech for transcription. Disable cloud STT in Settings to keep audio on-device."
+- [ ] Privacy disclosure: "Audio is streamed to Azure AI Speech for transcription. Enable local STT in Settings to keep audio on-device (requires ~3 GB model download)."
 
-#### 8b. VAD gating
+#### 7b. VAD gating
 
 Azure AI Speech does its own VAD server-side, but client-side VAD still saves cost and bandwidth.
 
@@ -123,27 +120,29 @@ Azure AI Speech does its own VAD server-side, but client-side VAD still saves co
 - [ ] Backstop for the local-WhisperKit offline path which lacks server-side VAD
 - [ ] Configurable threshold + hangover time
 
-#### 8c. Vocabulary biasing (phrase lists)
+#### 7c. Vocabulary biasing (phrase lists)
 
 - [ ] Wire context from #3 (URL / PDF / text) into Azure Speech `PhraseListGrammar` (cloud) and Whisper `DecodingOptions.prefix` (local fallback)
 - [ ] Extract candidate terms from the context: capitalized words, acronyms, names
 - [ ] Names, paper titles, technical terms get spelled correctly after first mention
 - [ ] Per-meeting editable vocabulary list — surface in UI before recording
 
-#### 8d. Offline re-transcribe pass (the killer feature)
+#### 7d. Offline re-transcribe pass (the killer feature)
 
-After the meeting ends, run a higher-quality batch transcription on the saved `audio.m4a` from #1. Same Azure Speech service, different endpoint — batch transcription gets full-context decoding instead of 1.5s sliding windows. Dramatic accuracy bump.
+After the meeting ends, run a higher-quality batch transcription on the saved `mic.m4a` + `system.m4a` from #1. Same Azure Speech service, different endpoint — batch transcription gets full-context decoding instead of 1.5s sliding windows. Dramatic accuracy bump.
 
 - [ ] On meeting stop, queue an offline re-transcribe job
 - [ ] Use Azure Speech **batch transcription REST API** (upload audio to Azure Blob or use direct file submission)
-- [ ] Inject the meeting's vocabulary list (#8c) as phrase list
+- [ ] Inject the meeting's vocabulary list (#7c) as phrase list
 - [ ] Enable diarization in batch mode — produces cleaner speaker labels than live
-- [ ] Replace `transcript.jsonl` and `paragraphs.jsonl` with re-transcribed versions; keep originals as `.live.jsonl` for diffing
-- [ ] Re-run polish + cheatsheet on the cleaned transcript
-- [ ] UI: "Improved transcript ready" notification when done; one-click view diff
+- [ ] Write re-transcribed results to **separate files**: `transcript.batch.jsonl` + `paragraphs.batch.jsonl` — never silently overwrite the live versions (they have stable IDs from §5 that §6's accept/reject UI references)
+- [ ] Keep originals as-is; rename to `.live.jsonl` only after user explicitly accepts the batch version
+- [ ] **Accept migration**: when user taps "Accept improved transcript", do a one-shot ID-preserving merge — match paragraphs by text overlap, keep existing IDs where possible, assign new IDs only for genuinely new segments
+- [ ] Re-run polish + cheatsheet on the accepted transcript
+- [ ] UI: "Improved transcript ready" notification when done; one-click diff view + Accept/Keep Original buttons
 - [ ] Local fallback: if user disabled cloud, run local `large-v3-turbo` against the saved file (no streaming constraint)
 
-#### 8e. Separate mic + system audio streams
+#### 7e. Separate mic + system audio streams
 
 - [ ] Stop mixing mic + ScreenCaptureKit into one mono stream before STT
 - [ ] Send mic and system audio as **two separate Azure Speech recognizers** (or one stereo stream with channel routing)
@@ -153,16 +152,16 @@ After the meeting ends, run a higher-quality batch transcription on the saved `a
 
 ## Execution order
 
-1. **#1 auto-save** — foundation. Must survive crash/quit before we layer cloud calls on top. Also unlocks #8d (offline re-transcribe needs the saved audio file).
+1. **#1 auto-save** — foundation. Must survive crash/quit before we layer cloud calls on top. Also unlocks #7d (offline re-transcribe needs the saved audio files). Includes basic playback UI + delete-meeting.
 2. **#2 cloud LLM + audio-only fallback** — new default polish path. Ship reachability + replay queue here so #1's saved audio gets re-polished when back online.
-3. **#8a + #8b cloud STT + VAD** — biggest accuracy win. Solves throttling and hallucinations in one shot. Do alongside or right after #2 since the provider/keychain/reachability scaffolding is identical.
-4. **#7 icon** — quick win between heavy phases.
-5. **#3 context input** — unlocks #8c (vocabulary biasing) the moment it ships.
-6. **#8c + #8d** — vocabulary biasing + offline re-transcribe. Closes ~80% of the accuracy gap vs the offline voice-memo pipeline.
-7. **#5 timestamps + stable IDs + version field** — ship the full contract upfront to avoid migration during #6.
-8. **#6 re-polish** — pure consumer of #5's contract + #2's cloud calls.
-9. **#8e separate streams** — do after STT cloud is stable; needs two-channel handling.
-10. **#4 video** — biggest scope, lowest urgency, last.
+3. **#7a + #7b cloud STT + VAD** — biggest accuracy win. Solves throttling and hallucinations in one shot. Do alongside or right after #2 since the provider/keychain/reachability scaffolding is identical.
+4. **#3 context input** — unlocks #7c (vocabulary biasing) the moment it ships.
+5. **#7c + #7d** — vocabulary biasing + offline re-transcribe. Closes ~80% of the accuracy gap vs the offline voice-memo pipeline.
+6. **#5 timestamps + stable IDs + version field** — ship the full contract upfront to avoid migration during #6.
+7. **#6 re-polish** — pure consumer of #5's contract + #2's cloud calls.
+8. **#7e separate streams** — do after STT cloud is stable; needs two-channel handling. Audio files already saved separately from #1.
+9. **#4 video** — biggest scope, lowest urgency, last.
+10. **App icon** — pure polish, doesn't unblock anything. Batch with iOS polish phase.
 
 ## Backlog (cross-platform)
 
@@ -199,6 +198,7 @@ After the meeting ends, run a higher-quality batch transcription on the saved `a
 
 ### Nice-to-have
 
+- [ ] **App icon** — mic + brain or speech bubble + sparkle. Full icon set (16–1024 @1x/@2x). Batched here with iOS polish since it doesn't unblock any feature.
 - [ ] **Speaker diarization** — needs separate model (WhisperKit doesn't do this)
 - [ ] **Multi-language** — detect + swap Whisper variants
 - [ ] **Meeting templates** — standup / 1:1 / customer call presets

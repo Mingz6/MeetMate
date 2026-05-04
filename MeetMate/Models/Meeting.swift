@@ -7,7 +7,6 @@ final class Meeting {
     var title: String
     var startedAt: Date
     var endedAt: Date?
-    var audioFilePath: String?
     var summary: String?
 
     @Relationship(deleteRule: .cascade, inverse: \TranscriptSegment.meeting)
@@ -17,6 +16,21 @@ final class Meeting {
         self.id = UUID()
         self.title = title
         self.startedAt = startedAt
+    }
+
+    /// Derived session folder name, e.g. "2026-05-03-1430". Matches SessionStorage.folderName(from:).
+    var sessionFolderName: String {
+        SessionStorage.folderName(from: startedAt)
+    }
+
+    /// Full URL to the session folder under ~/Documents/MeetMate/Sessions/
+    var sessionFolderURL: URL {
+        SessionStorage.sessionsRoot().appendingPathComponent(sessionFolderName, isDirectory: true)
+    }
+
+    /// Whether the session folder exists on disk
+    var hasSessionFolder: Bool {
+        FileManager.default.fileExists(atPath: sessionFolderURL.path)
     }
 }
 

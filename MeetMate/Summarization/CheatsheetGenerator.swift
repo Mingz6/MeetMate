@@ -10,6 +10,9 @@ final class CheatsheetGenerator: ObservableObject {
     private var sessionToken: Int = 0
     private let updateIntervalSec: TimeInterval = 30
 
+    /// Set by the view layer before starting. Cheatsheet flushes to disk after each refresh.
+    var sessionStorage: SessionStorage?
+
     init(llm: LLMService) {
         self.llm = llm
     }
@@ -69,6 +72,13 @@ final class CheatsheetGenerator: ObservableObject {
             print("[Cheatsheet] raw response:\n\(response)")
             current = parseCheatsheet(from: response, previous: current)
             print("[Cheatsheet] topic=\(current.currentTopic) points=\(current.keyPoints.count) Qs=\(current.openQuestions.count) actions=\(current.actionItems.count)")
+
+            sessionStorage?.writeCheatsheet(
+                topic: current.currentTopic,
+                keyPoints: current.keyPoints,
+                questions: current.openQuestions,
+                actions: current.actionItems
+            )
         } catch {
             print("[Cheatsheet] refresh failed: \(error)")
         }
