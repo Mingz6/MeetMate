@@ -187,6 +187,20 @@ final class SessionStorage: Sendable {
         return url
     }
 
+    /// Save a webcam frame as JPEG. Stored in a separate `webcam/` subdirectory.
+    @discardableResult
+    func writeWebcamFrame(jpeg: Data, timestamp: TimeInterval) -> URL? {
+        let webcamDir = sessionFolder.appendingPathComponent("webcam", isDirectory: true)
+        let filename = String(format: "webcam_%06.1f.jpg", timestamp)
+        let url = webcamDir.appendingPathComponent(filename)
+
+        fileQueue.async {
+            try? FileManager.default.createDirectory(at: webcamDir, withIntermediateDirectories: true)
+            try? jpeg.write(to: url)
+        }
+        return url
+    }
+
     /// Prune old frames beyond the cap. Call periodically.
     func pruneFrames() {
         fileQueue.async { [sessionFolder] in

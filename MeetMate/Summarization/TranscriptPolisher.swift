@@ -187,7 +187,7 @@ final class TranscriptPolisher: ObservableObject {
         defer { isPolishing = false }
         let token = sessionToken
         do {
-            let response = try await llm.generate(prompt: prompt, maxTokens: 1500)
+            let response = try await llm.generate(prompt: prompt, maxTokens: 1500, task: .polish)
             guard token == sessionToken, !Task.isCancelled else {
                 print("[Polish] dropping stale result from prior session")
                 return
@@ -320,7 +320,7 @@ final class TranscriptPolisher: ObservableObject {
 
         let token = sessionToken
         do {
-            let response = try await llm.generate(prompt: prompt, maxTokens: 800)
+            let response = try await llm.generate(prompt: prompt, maxTokens: 800, task: .rePolish)
             guard token == sessionToken, !Task.isCancelled else { return }
             guard let revisions = parseRevisionResponse(response, validIds: Set(windowIds)) else {
                 print("[RePolish] parse failed: \(response.prefix(200))")
@@ -464,7 +464,10 @@ final class TranscriptPolisher: ObservableObject {
     private func dominantSpeakerId(of segments: ArraySlice<TranscriptSegment>) -> Int? {
         var counts: [Int: Int] = [:]
         for seg in segments {
-            if let speaker = seg.speaker, let id = Int(speaker.replacingOccurrences(of: "Speaker ", with: "")) {
+            guard let speaker = seg.speaker else { continue }
+            // Parse "Speaker N", "Room Speaker N", or "Remote Speaker N"
+            let number = speaker.components(separatedBy: .whitespaces).last.flatMap { Int($0) }
+            if let id = number {
                 counts[id, default: 0] += 1
             }
         }
@@ -528,7 +531,7 @@ final class TranscriptPolisher: ObservableObject {
         let token = sessionToken
 
         do {
-            let response = try await llm.generate(prompt: prompt, maxTokens: 3000)
+            let response = try await llm.generate(prompt: prompt, maxTokens: 3000, task: .batchPolish)
             guard token == sessionToken, !Task.isCancelled else { return }
             guard let parsed = parseResponse(response) else {
                 print("[BatchPolish] parse failed: \(response.prefix(200))")

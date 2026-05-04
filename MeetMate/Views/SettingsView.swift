@@ -8,6 +8,7 @@ struct SettingsView: View {
     // Azure OpenAI fields — stored in Keychain, local state for editing
     @State private var azureEndpoint: String = ""
     @State private var azureDeployment: String = ""
+    @State private var azureDeploymentMini: String = ""
     @State private var azureAPIKey: String = ""
     @State private var azureConfigured = false
 
@@ -27,7 +28,8 @@ struct SettingsView: View {
             // MARK: - Azure OpenAI
             Section {
                 TextField("Endpoint", text: $azureEndpoint, prompt: Text("https://your-resource.openai.azure.com"))
-                TextField("Deployment name", text: $azureDeployment, prompt: Text("gpt-4o"))
+                TextField("Deployment name (primary)", text: $azureDeployment, prompt: Text("gpt-4o"))
+                TextField("Deployment name (mini, optional)", text: $azureDeploymentMini, prompt: Text("gpt-4o-mini — used for polish/cheatsheet"))
                 SecureField("API key", text: $azureAPIKey, prompt: Text("••••••••"))
 
                 HStack {
@@ -132,6 +134,7 @@ struct SettingsView: View {
     private func loadAzureConfig() {
         azureEndpoint = KeychainHelper.get(forKey: KeychainHelper.azureEndpointKey) ?? ""
         azureDeployment = KeychainHelper.get(forKey: KeychainHelper.azureDeploymentKey) ?? ""
+        azureDeploymentMini = KeychainHelper.get(forKey: KeychainHelper.azureDeploymentMiniKey) ?? ""
         azureAPIKey = KeychainHelper.get(forKey: KeychainHelper.azureAPIKeyKey) ?? ""
         azureConfigured = !azureEndpoint.isEmpty && !azureDeployment.isEmpty && !azureAPIKey.isEmpty
     }
@@ -140,15 +143,22 @@ struct SettingsView: View {
         KeychainHelper.set(azureEndpoint, forKey: KeychainHelper.azureEndpointKey)
         KeychainHelper.set(azureDeployment, forKey: KeychainHelper.azureDeploymentKey)
         KeychainHelper.set(azureAPIKey, forKey: KeychainHelper.azureAPIKeyKey)
+        if !azureDeploymentMini.isEmpty {
+            KeychainHelper.set(azureDeploymentMini, forKey: KeychainHelper.azureDeploymentMiniKey)
+        } else {
+            KeychainHelper.delete(forKey: KeychainHelper.azureDeploymentMiniKey)
+        }
         azureConfigured = true
     }
 
     private func clearAzureConfig() {
         KeychainHelper.delete(forKey: KeychainHelper.azureEndpointKey)
         KeychainHelper.delete(forKey: KeychainHelper.azureDeploymentKey)
+        KeychainHelper.delete(forKey: KeychainHelper.azureDeploymentMiniKey)
         KeychainHelper.delete(forKey: KeychainHelper.azureAPIKeyKey)
         azureEndpoint = ""
         azureDeployment = ""
+        azureDeploymentMini = ""
         azureAPIKey = ""
         azureConfigured = false
     }

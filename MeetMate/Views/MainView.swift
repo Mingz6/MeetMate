@@ -12,6 +12,7 @@ struct MainView: View {
     @StateObject private var replier: ReplyGenerator
     @StateObject private var polisher: TranscriptPolisher
     @StateObject private var frameCapture = FrameCaptureService()
+    @StateObject private var webcamCapture = WebcamCaptureService()
     @StateObject private var vision: VisionService
 
     @AppStorage("userName") private var userName: String = "Ming"
@@ -19,6 +20,7 @@ struct MainView: View {
     @AppStorage("showPolished") private var showPolished: Bool = true
     @AppStorage("showCheatsheet") private var showCheatsheet: Bool = true
     @AppStorage("videoCaptureEnabled") private var videoCaptureEnabled: Bool = false
+    @AppStorage("webcamEnabled") private var webcamEnabled: Bool = false
     @State private var currentMeeting: Meeting?
     @State private var startError: String?
     @State private var loadError: String?
@@ -61,6 +63,8 @@ struct MainView: View {
                 Toggle(isOn: $showContext) { Label("Context", systemImage: "doc.text") }
                 Toggle(isOn: $videoCaptureEnabled) { Label("Screen", systemImage: "camera.metering.spot") }
                     .help("Capture screen frames for vision analysis (uses cloud LLM tokens)")
+                Toggle(isOn: $webcamEnabled) { Label("Webcam", systemImage: "web.camera") }
+                    .help("Capture webcam frames alongside screen frames")
                 Spacer()
                 Button(action: copyTranscript) {
                     Label("Copy transcript", systemImage: "doc.on.doc")
@@ -299,6 +303,15 @@ struct MainView: View {
                 }
                 vision.startRolling()
             }
+
+            // Start webcam capture (if enabled)
+            webcamCapture.isEnabled = webcamEnabled
+            if webcamEnabled {
+                webcamCapture.onFrame = { [weak storage] frame in
+                    storage?.writeWebcamFrame(jpeg: frame.jpeg, timestamp: frame.timestamp)
+                }
+                try? webcamCapture.start(meetingStart: now)
+            }
         }
     }
 
@@ -308,6 +321,7 @@ struct MainView: View {
         polisher.stop()
         replier.stopWatching()
         frameCapture.stop()
+        webcamCapture.stop()
         vision.stopRolling()
         currentMeeting?.endedAt = .now
 
@@ -339,8 +353,8 @@ struct MainView: View {
     private func startBatchReTranscription(sessionFolder: URL) {
         let speechRegion = KeychainHelper.get(forKey: KeychainHelper.azureSpeechRegionKey) ?? ""
         let speechKey = KeychainHelper.get(forKey: KeychainHelper.azureSpeechKeyKey) ?? ""
-        guard !speechRegion.isEmpty, !speechKey.isEmpty else { return }
 
+        // Cloud or local — BatchReTranscriber routes based on whether keys are configured
         let retranscriber = BatchReTranscriber(region: speechRegion, apiKey: speechKey)
         self.batchReTranscriber = retranscriber
         let vocabulary = contextService.mergedVocabulary
