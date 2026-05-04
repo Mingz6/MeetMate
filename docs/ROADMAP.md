@@ -137,9 +137,9 @@ After the meeting ends, run a higher-quality batch transcription on the saved `m
 - [x] Enable diarization in batch mode — Fast Transcription API with maxSpeakers=10, speaker IDs surfaced in polished view
 - [x] Write re-transcribed results to **separate files**: `transcript.batch.jsonl` + `paragraphs.batch.jsonl` — never silently overwrite the live versions (they have stable IDs from §5 that §6's accept/reject UI references)
 - [x] Keep originals as-is; rename to `.live.jsonl` only after user explicitly accepts the batch version
-- [ ] **Accept migration**: when user taps "Accept improved transcript", do a one-shot ID-preserving merge — match paragraphs by text overlap, keep existing IDs where possible, assign new IDs only for genuinely new segments
+- [x] **Accept migration**: one-shot re-polish from batch segments with ID-preserving merge — matches existing paragraphs by >50% time overlap, keeps their IDs (bumped version), new IDs for genuinely new content
 - [x] **Speaker ID propagation on accept**: replaces live segments with batch data, maps speaker IDs onto existing polished paragraphs by time overlap (majority vote)
-- [ ] Re-run polish + cheatsheet on the accepted transcript
+- [x] Re-run polish + cheatsheet on the accepted transcript (triggered automatically after accept)
 - [x] UI: "Improved transcript ready" notification when done; one-click diff view + Accept/Keep Original buttons
 - [ ] Local fallback: if user disabled cloud, run local `large-v3-turbo` against the saved file (no streaming constraint)
 
