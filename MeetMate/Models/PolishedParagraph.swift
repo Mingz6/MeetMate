@@ -12,6 +12,17 @@ struct PolishedParagraph: Codable, Identifiable, Sendable {
     let endSec: Float
     let version: Int
     let source: AudioSource?
+    let speakerId: Int?   // From diarization (nil = not available)
+
+    init(id: String, text: String, startSec: Float, endSec: Float, version: Int, source: AudioSource?, speakerId: Int? = nil) {
+        self.id = id
+        self.text = text
+        self.startSec = startSec
+        self.endSec = endSec
+        self.version = version
+        self.source = source
+        self.speakerId = speakerId
+    }
 
     /// Format timestamp as [mm:ss]
     var timestampLabel: String {
@@ -28,6 +39,14 @@ struct PolishedParagraph: Codable, Identifiable, Sendable {
         case .system: return "remote"
         default: return nil
         }
+    }
+
+    /// Speaker label combining source + diarization ID.
+    var speakerLabel: String? {
+        if let speakerId {
+            return "Speaker \(speakerId)"
+        }
+        return sourceLabel
     }
 }
 

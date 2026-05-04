@@ -52,6 +52,17 @@ First launch will prompt for microphone + screen recording permissions. Grant bo
 - [docs/architecture.md](docs/architecture.md) — system diagram and data flow
 - [docs/setup.md](docs/setup.md) — local dev setup
 
+## Privacy
+
+When cloud mode is active:
+- **Audio** is streamed to Azure AI Speech for transcription. Microsoft retains no data beyond the session. See [Azure Speech data privacy](https://learn.microsoft.com/azure/ai-services/speech-service/speech-services-data-security-privacy).
+- **Speaker diarization** (batch re-transcription) sends the full audio file to Azure's Fast Transcription API. Audio is processed in-region and not stored after the response.
+- **Transcript + screen frames** are sent to Azure OpenAI for polishing, cheatsheet, and vision analysis. Data is not used for model training on Azure OpenAI resources.
+- **No telemetry** is sent anywhere. No analytics SDK is bundled.
+- **Local fallback mode** keeps everything on-device — nothing leaves the machine.
+
+All credentials are stored in Keychain. Session data lives in `~/Documents/MeetMate/Sessions/`.
+
 ## License
 
 [MIT](LICENSE).

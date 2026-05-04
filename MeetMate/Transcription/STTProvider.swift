@@ -15,6 +15,16 @@ struct STTSegment: Sendable {
     let endSec: Float
     let isFinal: Bool
     let source: AudioSource
+    let speakerId: Int?  // Speaker diarization label (nil = not available)
+
+    init(text: String, startSec: Float, endSec: Float, isFinal: Bool, source: AudioSource, speakerId: Int? = nil) {
+        self.text = text
+        self.startSec = startSec
+        self.endSec = endSec
+        self.isFinal = isFinal
+        self.source = source
+        self.speakerId = speakerId
+    }
 }
 
 /// Errors from STT providers.

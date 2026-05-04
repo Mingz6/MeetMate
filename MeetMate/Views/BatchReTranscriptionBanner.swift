@@ -29,8 +29,15 @@ struct BatchReTranscriptionBanner: View {
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
-                Text("Improved transcript ready (\(count) segments)")
-                    .font(.caption)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Improved transcript ready (\(count) segments)")
+                        .font(.caption)
+                    if batch.uniqueSpeakerCount > 1 {
+                        Text("\(batch.uniqueSpeakerCount) speakers detected")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Spacer()
                 Button("Accept") { onAccept() }
                     .buttonStyle(.borderedProminent)

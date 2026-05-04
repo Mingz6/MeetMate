@@ -112,7 +112,7 @@ private struct ParagraphRow: View {
                     .buttonStyle(.plain)
                     .help("Seek to \(paragraph.timestampLabel)")
 
-                    if let label = paragraph.sourceLabel {
+                    if let label = paragraph.speakerLabel {
                         Text(label)
                             .font(.caption2)
                             .foregroundStyle(paragraph.source == .mic ? .green : .purple)
