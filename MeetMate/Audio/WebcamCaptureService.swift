@@ -62,6 +62,7 @@ private final class WebcamCaptureImpl: NSObject, AVCaptureVideoDataOutputSampleB
     private let onFrame: @Sendable (WebcamCaptureService.CapturedFrame) -> Void
     private var lastCaptureTime: Date = .distantPast
     private let jpegQuality: CGFloat = 0.6
+    private let ciContext = CIContext()
     private let outputQueue = DispatchQueue(label: "dev.mingz.MeetMate.webcam", qos: .utility)
 
     init(interval: TimeInterval, meetingStart: Date, onFrame: @escaping @Sendable (WebcamCaptureService.CapturedFrame) -> Void) {
@@ -113,16 +114,13 @@ private final class WebcamCaptureImpl: NSObject, AVCaptureVideoDataOutputSampleB
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        let context = CIContext()
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
 
-        guard let cgImage = context.createCGImage(ciImage, from: CGRect(x: 0, y: 0, width: width, height: height)) else { return }
+        guard let cgImage = ciContext.createCGImage(ciImage, from: CGRect(x: 0, y: 0, width: width, height: height)) else { return }
 
-        let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: width, height: height))
-        guard let tiffData = nsImage.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiffData),
-              let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: jpegQuality]) else { return }
+        let bitmap = NSBitmapImageRep(cgImage: cgImage)
+        guard let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: jpegQuality]) else { return }
 
         let timestamp = now.timeIntervalSince(meetingStart)
         let frame = WebcamCaptureService.CapturedFrame(

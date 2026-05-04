@@ -84,7 +84,10 @@ final class LLMService: ObservableObject {
         // Watch for reachability changes to switch providers
         reachabilityCancellable = self.reachability.$isCloudAvailable
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.resolveActiveProvider() }
+            .sink { [weak self] available in
+                self?.resolveActiveProvider()
+                if available { Task { [weak self] in _ = await self?.drainReplayQueue() } }
+            }
         resolveActiveProvider()
     }
 
