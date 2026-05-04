@@ -12,6 +12,9 @@ final class ReplyGenerator: ObservableObject {
     private var lastMentionSentence: String = ""
     private let cooldownSec: TimeInterval = 15
 
+    /// Optional pre-meeting context injected into reply prompts.
+    var contextProvider: (() -> String)?
+
     init(llm: LLMService) {
         self.llm = llm
     }
@@ -75,10 +78,16 @@ final class ReplyGenerator: ObservableObject {
     }
 
     private func generateReply(question: String, transcript: String, sheet: Cheatsheet) async {
+        let contextBlock: String
+        if let ctx = contextProvider?(), !ctx.isEmpty {
+            contextBlock = "\nMeeting context:\n\(ctx)\n\n"
+        } else {
+            contextBlock = ""
+        }
+
         let prompt = """
         Someone in the meeting just addressed you. Suggest a 2-3 sentence professional reply.
-
-        Question/prompt directed at you: "\(question)"
+        \(contextBlock)Question/prompt directed at you: "\(question)"
 
         Current meeting topic: \(sheet.currentTopic)
         Key points so far: \(sheet.keyPoints.joined(separator: "; "))

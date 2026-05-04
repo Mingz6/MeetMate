@@ -13,6 +13,9 @@ final class CheatsheetGenerator: ObservableObject {
     /// Set by the view layer before starting. Cheatsheet flushes to disk after each refresh.
     var sessionStorage: SessionStorage?
 
+    /// Optional pre-meeting context injected as system prompt prefix.
+    var contextProvider: (() -> String)?
+
     init(llm: LLMService) {
         self.llm = llm
     }
@@ -46,6 +49,13 @@ final class CheatsheetGenerator: ObservableObject {
     }
 
     func refresh(transcript: String) async {
+        let contextBlock: String
+        if let ctx = contextProvider?(), !ctx.isEmpty {
+            contextBlock = "\nMeeting context (use to inform topic detection and terminology):\n\(ctx)\n\n"
+        } else {
+            contextBlock = ""
+        }
+
         let prompt = """
         You are a meeting assistant. Read the transcript and output ONLY a JSON object with these exact keys:
         {
@@ -55,8 +65,7 @@ final class CheatsheetGenerator: ObservableObject {
           "actionItems": ["any TODOs/owners mentioned, can be empty"]
         }
         Output JSON only — no markdown fences, no commentary.
-
-        Transcript (most recent):
+        \(contextBlock)Transcript (most recent):
         \(transcript.suffix(4000))
         /no_think
         """

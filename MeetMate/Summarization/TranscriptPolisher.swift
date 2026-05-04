@@ -36,6 +36,9 @@ final class TranscriptPolisher: ObservableObject {
     /// Set by the view layer before starting. Polish output flushes to disk after each cycle.
     var sessionStorage: SessionStorage?
 
+    /// Optional pre-meeting context injected as system prompt prefix.
+    var contextProvider: (() -> String)?
+
     init(llm: LLMService) {
         self.llm = llm
     }
@@ -77,10 +80,16 @@ final class TranscriptPolisher: ObservableObject {
         let pending = Array(all[cursor..<all.count])
         let raw = pending.map(\.text).joined(separator: " ")
 
+        let contextBlock: String
+        if let ctx = contextProvider?(), !ctx.isEmpty {
+            contextBlock = "\nMeeting context (use for domain terms, names, and accuracy):\n\(ctx)\n\n"
+        } else {
+            contextBlock = ""
+        }
+
         let prompt = """
         You are an editor turning a clean live meeting transcript into the kind of polished paragraphs that would appear in published notes or a transcript article.
-
-        Your job is to REWRITE, not just split.
+        \(contextBlock)Your job is to REWRITE, not just split.
 
         Rules:
         - Fix grammar, punctuation, and capitalization.
