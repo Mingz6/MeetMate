@@ -31,13 +31,29 @@ final class AzureOpenAIProvider: LLMProvider, @unchecked Sendable {
     }
 
     func generate(prompt: String, maxTokens: Int) async throws -> LLMResult {
+        try await generate(prompt: prompt, maxTokens: maxTokens, task: .general)
+    }
+
+    /// Generate with task-based deployment routing.
+    /// Uses mini deployment for high-frequency tasks (polish, cheatsheet) when configured.
+    func generate(prompt: String, maxTokens: Int, task: LLMTask) async throws -> LLMResult {
         guard let endpoint = KeychainHelper.get(forKey: KeychainHelper.azureEndpointKey),
               let apiKey = KeychainHelper.get(forKey: KeychainHelper.azureAPIKeyKey),
               let deployment = KeychainHelper.get(forKey: KeychainHelper.azureDeploymentKey) else {
             throw LLMProviderError.notConfigured("Azure OpenAI endpoint, API key, or deployment missing from Keychain")
         }
 
-        let url = buildURL(endpoint: endpoint, deployment: deployment)
+        // Route to mini deployment for frequent/cheap tasks when configured
+        let resolvedDeployment: String
+        if task.prefersMini,
+           let mini = KeychainHelper.get(forKey: KeychainHelper.azureDeploymentMiniKey),
+           !mini.isEmpty {
+            resolvedDeployment = mini
+        } else {
+            resolvedDeployment = deployment
+        }
+
+        let url = buildURL(endpoint: endpoint, deployment: resolvedDeployment)
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue(apiKey, forHTTPHeaderField: "api-key")

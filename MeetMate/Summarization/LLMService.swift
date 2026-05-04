@@ -144,13 +144,18 @@ final class LLMService: ObservableObject {
     /// Generate text using the best available provider (cloud → local → recording-only).
     /// Consumer API is unchanged from pre-§2.
     func generate(prompt: String, maxTokens: Int = 512) async throws -> String {
+        try await generate(prompt: prompt, maxTokens: maxTokens, task: .general)
+    }
+
+    /// Generate with explicit task type for per-deployment routing.
+    func generate(prompt: String, maxTokens: Int = 512, task: LLMTask) async throws -> String {
         isGenerating = true
         defer { isGenerating = false }
 
         // Try cloud first
         if activeProvider == .cloud {
             do {
-                let result = try await azure.generate(prompt: prompt, maxTokens: maxTokens)
+                let result = try await azure.generate(prompt: prompt, maxTokens: maxTokens, task: task)
                 reachability.reportSuccess()
                 if let usage = result.usage {
                     sessionUsage.add(usage)

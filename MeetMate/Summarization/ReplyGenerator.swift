@@ -101,7 +101,7 @@ final class ReplyGenerator: ObservableObject {
 
         let token = sessionToken
         do {
-            let reply = try await llm.generate(prompt: prompt, maxTokens: 200)
+            let reply = try await llm.generate(prompt: prompt, maxTokens: 200, task: .reply)
             guard token == sessionToken, !Task.isCancelled else {
                 print("[Reply] dropping stale suggestion from prior session")
                 return

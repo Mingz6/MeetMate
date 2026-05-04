@@ -317,8 +317,15 @@ final class AzureSpeechSTT: @unchecked Sendable {
 
         // Use NBest[0].Display for best text, fall back to DisplayText
         var text = obj["DisplayText"] as? String ?? ""
+        var speakerId: Int?
         if let nbest = obj["NBest"] as? [[String: Any]], let first = nbest.first {
             text = first["Display"] as? String ?? text
+            // Azure Speech returns SpeakerId when diarization is active
+            speakerId = first["SpeakerId"] as? Int
+        }
+        // Fallback: top-level SpeakerId (some endpoints surface it here)
+        if speakerId == nil {
+            speakerId = obj["SpeakerId"] as? Int
         }
 
         guard !text.isEmpty else { return }
@@ -331,7 +338,8 @@ final class AzureSpeechSTT: @unchecked Sendable {
             startSec: offset,
             endSec: offset + duration,
             isFinal: true,
-            source: audioSource
+            source: audioSource,
+            speakerId: speakerId
         )
         onSegment?(segment)
     }

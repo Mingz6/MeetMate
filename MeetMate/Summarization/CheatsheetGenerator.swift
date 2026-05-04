@@ -73,7 +73,7 @@ final class CheatsheetGenerator: ObservableObject {
         let token = sessionToken
         do {
             print("[Cheatsheet] refreshing…")
-            let response = try await llm.generate(prompt: prompt, maxTokens: 600)
+            let response = try await llm.generate(prompt: prompt, maxTokens: 600, task: .cheatsheet)
             guard token == sessionToken, !Task.isCancelled else {
                 print("[Cheatsheet] dropping stale result from prior session")
                 return

@@ -282,7 +282,21 @@ final class TranscriptionService: ObservableObject {
         if segment.isFinal {
             let text = stripNoise(segment.text)
             guard !text.isEmpty else { return }
-            appendConfirmed(text: text, startSec: segment.startSec, endSec: segment.endSec, source: segment.source)
+
+            // Combine source + speaker diarization for per-speaker labels:
+            // mic stream → "Room Speaker N", system stream → "Remote Speaker N"
+            let speakerLabel: String?
+            if let speakerId = segment.speakerId {
+                switch segment.source {
+                case .mic: speakerLabel = "Room Speaker \(speakerId)"
+                case .system: speakerLabel = "Remote Speaker \(speakerId)"
+                default: speakerLabel = "Speaker \(speakerId)"
+                }
+            } else {
+                speakerLabel = nil
+            }
+
+            appendConfirmed(text: text, startSec: segment.startSec, endSec: segment.endSec, source: segment.source, speaker: speakerLabel)
             lastConfirmedSec = segment.endSec
             unconfirmedText = ""
             updateLive()
@@ -422,13 +436,14 @@ final class TranscriptionService: ObservableObject {
         updateLive()
     }
 
-    private func appendConfirmed(text: String, startSec: Float, endSec: Float, source: AudioSource = .mixed) {
+    private func appendConfirmed(text: String, startSec: Float, endSec: Float, source: AudioSource = .mixed, speaker: String? = nil) {
         let prefix = confirmedTranscript.isEmpty ? "" : " "
         confirmedTranscript += prefix + text
         let segment = TranscriptSegment(
             startTime: TimeInterval(startSec),
             endTime: TimeInterval(endSec),
             text: text,
+            speaker: speaker,
             source: source
         )
         segments.append(segment)
@@ -437,12 +452,13 @@ final class TranscriptionService: ObservableObject {
             startTime: TimeInterval(startSec),
             endTime: TimeInterval(endSec),
             text: text,
-            speaker: nil,
+            speaker: speaker,
             source: source
         ))
 
         let tag = source == .mixed ? "" : " [\(source.rawValue)]"
-        print("[STT ✓]\(tag) \(text)")
+        let spk = speaker.map { " (\($0))" } ?? ""
+        print("[STT ✓]\(tag)\(spk) \(text)")
     }
 
     private func updateLive() {

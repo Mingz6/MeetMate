@@ -13,6 +13,26 @@ struct LLMResult: Sendable {
     let usage: TokenUsage?
 }
 
+/// Task types for per-task model routing.
+/// Polish/cheatsheet use a cheaper mini deployment; re-polish/vision use the full model.
+enum LLMTask: String, Sendable {
+    case polish          // Rolling polish (high frequency, cheaper model OK)
+    case cheatsheet      // Rolling topic summary (high frequency)
+    case reply           // Reply suggestion (infrequent, needs quality)
+    case rePolish        // Retroactive re-polish (infrequent, needs quality)
+    case batchPolish     // One-shot batch re-polish after accept
+    case vision          // Screen frame analysis (needs multimodal)
+    case general         // Default / other
+
+    /// Whether this task should route to the mini (cheaper) deployment when available.
+    var prefersMini: Bool {
+        switch self {
+        case .polish, .cheatsheet: return true
+        case .reply, .rePolish, .batchPolish, .vision, .general: return false
+        }
+    }
+}
+
 /// Errors specific to LLM providers.
 enum LLMProviderError: Error, LocalizedError {
     case notConfigured(String)

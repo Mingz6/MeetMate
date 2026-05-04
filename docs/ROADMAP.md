@@ -37,7 +37,7 @@ Cloud is the new default. When the network is gone, MeetMate keeps capturing aud
 - [x] Primary cloud provider: **Azure OpenAI** (same Azure resource as AI Speech). Protocol stays open for Anthropic/Gemini later if needed.
 - [x] Settings: Azure endpoint + deployment name + API key entry, store in **Keychain** (NOT UserDefaults). API key auth for now — Entra ID / `az login` adds too much friction for a desktop app.
 - [x] **Region note**: deploy Azure OpenAI and AI Speech in the same region. Don't hard-pin — region choice depends on which has the latest model deployments (e.g. some regions get GPT-5 before others). Document the active region in Settings UI.
-- [ ] Per-task provider routing: polish vs cheatsheet vs reply vs re-polish can use different model tiers
+- [x] Per-task provider routing: polish vs cheatsheet vs reply vs re-polish can use different model tiers
 - [x] Streaming response support (SSE) so UI stays responsive
 - [x] **Reachability + failure handling** — 3 consecutive failures (timeout / 5xx / no network) → flip to `recordingOnly` mode, show banner: "Offline — audio + raw transcript still saving, polish paused"
 - [x] **Replay queue** — while offline, queue polish/cheatsheet jobs to disk; drain when back online against the saved transcript
@@ -61,7 +61,7 @@ Cloud is the new default. When the network is gone, MeetMate keeps capturing aud
 - [x] Extend ScreenCaptureKit `SCStream` with video output (already on the stream for audio)
 - [x] Sample frames at low rate (1 fps or every 5s) — control disk + LLM cost
 - [x] Save frames as JPEG in `Sessions/{id}/frames/` with timestamp filenames
-- [ ] Optional webcam input via AVCaptureSession
+- [x] Optional webcam input via AVCaptureSession
 - [x] Vision LLM call — recent frame + transcript snippet → "what's on screen now" cheatsheet enrichment
 - [x] UI toggle: video off by default (privacy + cost)
 - [x] Storage cap — auto-prune frames older than N hours
@@ -141,7 +141,7 @@ After the meeting ends, run a higher-quality batch transcription on the saved `m
 - [x] **Speaker ID propagation on accept**: replaces live segments with batch data, maps speaker IDs onto existing polished paragraphs by time overlap (majority vote)
 - [x] Re-run polish + cheatsheet on the accepted transcript (triggered automatically after accept)
 - [x] UI: "Improved transcript ready" notification when done; one-click diff view + Accept/Keep Original buttons
-- [ ] Local fallback: if user disabled cloud, run local `large-v3-turbo` against the saved file (no streaming constraint)
+- [x] Local fallback: if user disabled cloud, run local `large-v3-turbo` against the saved file (no streaming constraint)
 
 #### 7e. Separate mic + system audio streams
 
@@ -149,7 +149,7 @@ After the meeting ends, run a higher-quality batch transcription on the saved `m
 - [x] Send mic and system audio as **two separate Azure Speech recognizers** (or one stereo stream with channel routing)
 - [x] Tag segments by source: `[me]` vs `[remote]`
 - [x] Eliminates cross-talk degradation on overlapping speech
-- [ ] Combines with Azure's diarization — mic stream gets per-speaker labels for the in-room people, system stream gets per-speaker labels for the Zoom side
+- [x] Combines with Azure's diarization — mic stream gets per-speaker labels for the in-room people, system stream gets per-speaker labels for the Zoom side
 
 ## Execution order
 

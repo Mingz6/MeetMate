@@ -1,11 +1,14 @@
 import Foundation
 import Combine
 import AVFoundation
+import WhisperKit
 
-/// Re-transcribes saved audio files post-meeting using Azure Speech Fast Transcription API.
+/// Re-transcribes saved audio files post-meeting using Azure Speech Fast Transcription API
+/// or local WhisperKit (large-v3-turbo) when cloud is disabled.
+///
 /// Produces higher-quality results than live streaming because:
 /// - Full audio context (no sliding window)
-/// - Speaker diarization built in
+/// - Speaker diarization built in (cloud only)
 /// - Full phrase list injected
 /// - Word-level timestamps
 ///
@@ -20,6 +23,11 @@ final class BatchReTranscriber: ObservableObject {
         case transcribing(progress: Float)  // 0.0–1.0
         case complete(segmentCount: Int)
         case failed(String)
+    }
+
+    enum Mode {
+        case cloud   // Azure Fast Transcription API
+        case local   // WhisperKit large-v3-turbo
     }
 
     @Published private(set) var status: Status = .idle
@@ -38,21 +46,33 @@ final class BatchReTranscriber: ObservableObject {
         let speaker: Int?
     }
 
+    /// Resolved mode — cloud if configured, local fallback otherwise.
+    var mode: Mode {
+        (!region.isEmpty && !apiKey.isEmpty) ? .cloud : .local
+    }
+
     init(region: String, apiKey: String, language: String = "en-US") {
         self.region = region
         self.apiKey = apiKey
         self.language = language
     }
 
-    /// Start batch re-transcription of saved audio files.
+    /// Start batch re-transcription — routes to cloud or local depending on configuration.
     func reTranscribe(sessionFolder: URL, vocabulary: [String]) async {
-        guard !region.isEmpty, !apiKey.isEmpty else {
-            status = .failed("Azure Speech not configured")
-            return
-        }
-
         phraseList = vocabulary
         collectedSegments = []
+
+        switch mode {
+        case .cloud:
+            await reTranscribeCloud(sessionFolder: sessionFolder)
+        case .local:
+            await reTranscribeLocal(sessionFolder: sessionFolder)
+        }
+    }
+
+    // MARK: - Cloud path (Azure Fast Transcription API)
+
+    private func reTranscribeCloud(sessionFolder: URL) async {
         status = .loading
 
         // Find audio file
@@ -190,6 +210,96 @@ final class BatchReTranscriber: ObservableObject {
 
         status = .complete(segmentCount: collectedSegments.count)
         print("[Batch] Fast Transcription complete: \(collectedSegments.count) segments, speakers detected: \(uniqueSpeakerCount)")
+    }
+
+    // MARK: - Local path (WhisperKit large-v3-turbo)
+
+    private func reTranscribeLocal(sessionFolder: URL) async {
+        status = .loading
+
+        let micURL = sessionFolder.appendingPathComponent("mic.m4a")
+        let systemURL = sessionFolder.appendingPathComponent("system.m4a")
+
+        let audioURL: URL
+        if FileManager.default.fileExists(atPath: micURL.path) {
+            audioURL = micURL
+        } else if FileManager.default.fileExists(atPath: systemURL.path) {
+            audioURL = systemURL
+        } else {
+            status = .failed("No audio files found in session folder")
+            return
+        }
+
+        print("[Batch] local mode — loading WhisperKit large-v3-turbo for \(audioURL.lastPathComponent)")
+        status = .transcribing(progress: 0.1)
+
+        do {
+            let modelName = "openai_whisper-large-v3-turbo"
+            let config = WhisperKitConfig(
+                model: modelName,
+                verbose: false,
+                logLevel: .error,
+                prewarm: false,
+                load: false,
+                download: true
+            )
+            let whisper = try await WhisperKit(config)
+            try await whisper.loadModels()
+            status = .transcribing(progress: 0.3)
+
+            // Build prompt from vocabulary for biasing
+            var promptTokens: [Int]?
+            if !phraseList.isEmpty, let tokenizer = whisper.tokenizer {
+                let prompt = phraseList.prefix(50).joined(separator: ", ")
+                let tokens = tokenizer.encode(text: prompt)
+                promptTokens = tokens.isEmpty ? nil : Array(tokens.prefix(200))
+            }
+
+            let opts = DecodingOptions(
+                verbose: false,
+                task: .transcribe,
+                language: "en",
+                temperature: 0.0,
+                temperatureFallbackCount: 3,
+                sampleLength: 224,
+                usePrefillPrompt: true,
+                skipSpecialTokens: true,
+                withoutTimestamps: false,
+                promptTokens: promptTokens,
+                suppressBlank: true,
+                compressionRatioThreshold: 2.4,
+                logProbThreshold: -1.0,
+                noSpeechThreshold: 0.6
+            )
+
+            status = .transcribing(progress: 0.5)
+            let results = try await whisper.transcribe(audioPath: audioURL.path, decodeOptions: opts)
+            status = .transcribing(progress: 0.9)
+
+            guard let result = results.first else {
+                status = .failed("WhisperKit returned no results")
+                return
+            }
+
+            collectedSegments = result.segments.compactMap { seg in
+                let text = seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { return nil }
+                return BatchSegment(
+                    startTime: TimeInterval(seg.start),
+                    endTime: TimeInterval(seg.end),
+                    text: text,
+                    confidence: seg.avgLogprob > -1.0 ? Float(exp(seg.avgLogprob)) : nil,
+                    speaker: nil // Local WhisperKit doesn't do diarization
+                )
+            }
+
+            await writeResults(to: sessionFolder)
+            status = .complete(segmentCount: collectedSegments.count)
+            print("[Batch] local transcription complete: \(collectedSegments.count) segments")
+        } catch {
+            status = .failed("Local transcription failed: \(error.localizedDescription)")
+            print("[Batch] local error: \(error)")
+        }
     }
 
     /// The batch transcript as a single string.
