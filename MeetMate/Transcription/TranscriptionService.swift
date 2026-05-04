@@ -261,6 +261,23 @@ final class TranscriptionService: ObservableObject {
         updateLive()
     }
 
+    /// Replace the segment list with batch re-transcription results (which carry speaker IDs).
+    /// This gives the polisher access to diarization data for future polish cycles.
+    func replaceSegments(with batchSegments: [BatchReTranscriber.BatchSegment]) {
+        segments = batchSegments.map { seg in
+            let segment = TranscriptSegment(
+                startTime: seg.startTime,
+                endTime: seg.endTime,
+                text: seg.text,
+                speaker: seg.speaker.map { "Speaker \($0)" }
+            )
+            return segment
+        }
+        confirmedTranscript = batchSegments.map(\.text).joined(separator: " ")
+        unconfirmedText = ""
+        updateLive()
+    }
+
     private func handleCloudSegment(_ segment: STTSegment) {
         if segment.isFinal {
             let text = stripNoise(segment.text)

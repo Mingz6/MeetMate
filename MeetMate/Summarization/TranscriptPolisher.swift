@@ -96,6 +96,33 @@ final class TranscriptPolisher: ObservableObject {
         transcriber = nil
     }
 
+    /// After batch accept, map speaker IDs from batch segments onto existing polished paragraphs
+    /// by finding the dominant speaker for each paragraph's time range.
+    func applySpeakerIds(from batchSegments: [BatchReTranscriber.BatchSegment]) {
+        paragraphs = paragraphs.map { para in
+            // Find batch segments that overlap this paragraph's time range
+            let overlapping = batchSegments.filter { seg in
+                seg.endTime > Double(para.startSec) && seg.startTime < Double(para.endSec)
+            }
+            // Pick the speaker with the most overlapping segments (majority vote)
+            let speakerCounts = overlapping.compactMap(\.speaker).reduce(into: [Int: Int]()) { counts, id in
+                counts[id, default: 0] += 1
+            }
+            let dominantSpeaker = speakerCounts.max(by: { $0.value < $1.value })?.key
+
+            guard dominantSpeaker != para.speakerId else { return para }
+            return PolishedParagraph(
+                id: para.id,
+                text: para.text,
+                startSec: para.startSec,
+                endSec: para.endSec,
+                version: para.version,
+                source: para.source,
+                speakerId: dominantSpeaker
+            )
+        }
+    }
+
     private func polishOnce() async {
         guard let transcriber else { return }
         let all = transcriber.segments
@@ -184,6 +211,7 @@ final class TranscriptPolisher: ObservableObject {
                 // Derive dominant audio source from covered segments
                 let coveredSegments = pending[startIdx...endIdx]
                 let source = dominantSource(of: coveredSegments)
+                let speakerId = dominantSpeakerId(of: coveredSegments)
 
                 let para = PolishedParagraph(
                     id: idGenerator.next(),
@@ -191,7 +219,8 @@ final class TranscriptPolisher: ObservableObject {
                     startSec: startSec,
                     endSec: endSec,
                     version: 1,
-                    source: source
+                    source: source,
+                    speakerId: speakerId
                 )
                 newParagraphs.append(para)
             }
@@ -323,13 +352,18 @@ final class TranscriptPolisher: ObservableObject {
         let maxVersion = targets.map(\.version).max() ?? 0
 
         // Build the revised paragraph (same ID as the first target, bumped version)
+        // Preserve dominant speaker ID from the targets being merged
+        let speakerCounts = targets.compactMap(\.speakerId).reduce(into: [Int: Int]()) { $0[$1, default: 0] += 1 }
+        let dominantSpeaker = speakerCounts.max(by: { $0.value < $1.value })?.key
+
         let revised = PolishedParagraph(
             id: firstId,
             text: revision.newText,
             startSec: startSec,
             endSec: endSec,
             version: maxVersion + 1,
-            source: targets.first?.source
+            source: targets.first?.source,
+            speakerId: dominantSpeaker
         )
 
         // Replace in the paragraphs array: remove all targets, insert revised at first target's position
@@ -425,5 +459,15 @@ final class TranscriptPolisher: ObservableObject {
         }
         if micCount == 0 && sysCount == 0 { return nil }
         return micCount >= sysCount ? .mic : .system
+    }
+
+    private func dominantSpeakerId(of segments: ArraySlice<TranscriptSegment>) -> Int? {
+        var counts: [Int: Int] = [:]
+        for seg in segments {
+            if let speaker = seg.speaker, let id = Int(speaker.replacingOccurrences(of: "Speaker ", with: "")) {
+                counts[id, default: 0] += 1
+            }
+        }
+        return counts.max(by: { $0.value < $1.value })?.key
     }
 }
