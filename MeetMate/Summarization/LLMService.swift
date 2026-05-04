@@ -9,6 +9,17 @@ import MLXLMCommon
 
 @MainActor
 final class LLMService: ObservableObject {
+
+    // MARK: - Provider mode
+
+    enum ProviderMode: String {
+        case cloud = "Cloud (Azure OpenAI)"
+        case local = "Local (MLX)"
+        case recordingOnly = "Recording Only"
+    }
+
+    // MARK: - Local model choices
+
     enum ModelChoice: String, CaseIterable, Identifiable {
         case llama3_8b = "mlx-community/Llama-3.1-8B-Instruct-4bit"
         case qwen3_14b = "mlx-community/Qwen3-14B-4bit"
@@ -39,12 +50,45 @@ final class LLMService: ObservableObject {
         }
     }
 
+    // MARK: - Published state
+
     @Published private(set) var isLoaded = false
     @Published private(set) var isGenerating = false
     @Published private(set) var loadedModel: ModelChoice?
     @Published private(set) var loadProgress: Double = 0
+    @Published private(set) var activeProvider: ProviderMode = .recordingOnly
+    @Published private(set) var sessionUsage = SessionTokenUsage()
+    @Published var cloudPaused = false {
+        didSet {
+            if cloudPaused {
+                reachability.pauseCloud()
+            } else {
+                reachability.resumeCloud()
+            }
+            resolveActiveProvider()
+        }
+    }
 
+    // MARK: - Dependencies
+
+    let reachability: ReachabilityMonitor
+    private let azure = AzureOpenAIProvider()
+    private let replayQueue = ReplayQueue()
     private var modelContainer: ModelContainer?
+    private var reachabilityCancellable: AnyCancellable?
+
+    // MARK: - Init
+
+    init(reachability: ReachabilityMonitor? = nil) {
+        self.reachability = reachability ?? ReachabilityMonitor()
+        // Watch for reachability changes to switch providers
+        reachabilityCancellable = self.reachability.$isCloudAvailable
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.resolveActiveProvider() }
+        resolveActiveProvider()
+    }
+
+    // MARK: - Load local model (fallback)
 
     static func recommendedModel() -> ModelChoice {
         let totalRAMGB = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
@@ -63,10 +107,9 @@ final class LLMService: ObservableObject {
         #endif
     }
 
-    func load(_ choice: ModelChoice? = nil) async throws {
+    func loadLocalModel(_ choice: ModelChoice? = nil) async throws {
         let target = choice ?? Self.recommendedModel()
-        print("[LLM] loading \(target.displayName) (\(target.approximateSizeGB)GB on first run)…")
-        // Cap GPU cache so the LLM doesn't fight Whisper for memory
+        print("[LLM] loading local \(target.displayName) (\(target.approximateSizeGB)GB on first run)…")
         MLX.GPU.set(cacheLimit: 20 * 1024 * 1024)
         loadProgress = 0
 
@@ -87,26 +130,112 @@ final class LLMService: ObservableObject {
         loadedModel = target
         loadProgress = 1
         isLoaded = true
-        print("[LLM] model ready")
+        resolveActiveProvider()
+        print("[LLM] local model ready")
     }
 
+    /// Legacy compatibility — same as `loadLocalModel`.
+    func load(_ choice: ModelChoice? = nil) async throws {
+        try await loadLocalModel(choice)
+    }
+
+    // MARK: - Generate (provider-routed)
+
+    /// Generate text using the best available provider (cloud → local → recording-only).
+    /// Consumer API is unchanged from pre-§2.
     func generate(prompt: String, maxTokens: Int = 512) async throws -> String {
-        guard let container = modelContainer else { throw LLMError.notLoaded }
         isGenerating = true
         defer { isGenerating = false }
 
-        let session = ChatSession(
-            container,
-            generateParameters: GenerateParameters(maxTokens: maxTokens, temperature: 0.3)
-        )
-        let raw = try await session.respond(to: prompt)
-        return Self.stripThinking(raw)
+        // Try cloud first
+        if activeProvider == .cloud {
+            do {
+                let result = try await azure.generate(prompt: prompt, maxTokens: maxTokens)
+                reachability.reportSuccess()
+                if let usage = result.usage {
+                    sessionUsage.add(usage)
+                }
+                return result.text
+            } catch {
+                reachability.reportFailure()
+                resolveActiveProvider()
+                print("[LLM] cloud failed: \(error.localizedDescription), falling back")
+            }
+        }
+
+        // Try local fallback
+        if let container = modelContainer {
+            let session = ChatSession(
+                container,
+                generateParameters: GenerateParameters(maxTokens: maxTokens, temperature: 0.3)
+            )
+            let raw = try await session.respond(to: prompt)
+            return Self.stripThinking(raw)
+        }
+
+        // Both unavailable — we're in recording-only mode. Throw so callers know.
+        throw LLMError.noProviderAvailable
     }
 
-    /// Qwen3 emits <think>...</think> blocks. Strip them before returning to callers.
+    /// Generate with explicit task type — used for replay queue support.
+    func generate(prompt: String, maxTokens: Int = 512, taskType: ReplayJob.TaskType) async throws -> String {
+        do {
+            return try await generate(prompt: prompt, maxTokens: maxTokens)
+        } catch LLMError.noProviderAvailable {
+            // Queue for later replay
+            let job = ReplayJob(taskType: taskType, prompt: prompt, maxTokens: maxTokens, timestamp: Date())
+            await replayQueue.enqueue(job)
+            print("[LLM] queued \(taskType.rawValue) job for replay (\(await replayQueue.count) pending)")
+            throw LLMError.noProviderAvailable
+        }
+    }
+
+    // MARK: - Replay queue drain
+
+    /// Attempt to drain replay queue. Call when cloud comes back.
+    func drainReplayQueue() async -> [String] {
+        guard activeProvider == .cloud else { return [] }
+        let pending = await replayQueue.pending()
+        guard !pending.isEmpty else { return [] }
+        print("[LLM] draining \(pending.count) replay jobs")
+
+        var results: [String] = []
+        for job in pending {
+            do {
+                let text = try await generate(prompt: job.prompt, maxTokens: job.maxTokens)
+                results.append(text)
+                await replayQueue.remove(job)
+            } catch {
+                // If cloud fails again during drain, stop
+                print("[LLM] replay drain failed at job \(job.taskType.rawValue): \(error)")
+                break
+            }
+        }
+        return results
+    }
+
+    // MARK: - Cost tracking
+
+    var pendingReplayCount: Int {
+        get async { await replayQueue.count }
+    }
+
+    // MARK: - Provider resolution
+
+    private func resolveActiveProvider() {
+        if azure.isConfigured && reachability.isCloudAvailable && !cloudPaused {
+            activeProvider = .cloud
+        } else if modelContainer != nil {
+            activeProvider = .local
+        } else {
+            activeProvider = .recordingOnly
+        }
+    }
+
+    // MARK: - Private helpers
+
     private static func stripThinking(_ text: String) -> String {
         var out = text
-        // Greedy strip of any <think>...</think> blocks (single or multiline)
         if let regex = try? NSRegularExpression(pattern: "<think>[\\s\\S]*?</think>", options: []) {
             let range = NSRange(out.startIndex..., in: out)
             out = regex.stringByReplacingMatches(in: out, options: [], range: range, withTemplate: "")
@@ -115,13 +244,39 @@ final class LLMService: ObservableObject {
     }
 }
 
+// MARK: - Session token tracking
+
+struct SessionTokenUsage {
+    private(set) var promptTokens = 0
+    private(set) var completionTokens = 0
+    var totalTokens: Int { promptTokens + completionTokens }
+
+    /// Rough estimate at $0.01/1K prompt + $0.03/1K completion (GPT-4o pricing ballpark).
+    var estimatedCostUSD: Double {
+        (Double(promptTokens) / 1000 * 0.01) + (Double(completionTokens) / 1000 * 0.03)
+    }
+
+    mutating func add(_ usage: TokenUsage) {
+        promptTokens += usage.promptTokens
+        completionTokens += usage.completionTokens
+    }
+
+    mutating func reset() {
+        promptTokens = 0
+        completionTokens = 0
+    }
+}
+
+// MARK: - Errors
+
 enum LLMError: Error {
     case notLoaded
+    case noProviderAvailable
     case generationFailed(String)
 }
 
-/// Thread-safe throttle for progress logging from the loadContainer @Sendable callback.
-/// Sendable + locked so the closure capture doesn't trip Swift 6 strict concurrency.
+// MARK: - Progress logging helper
+
 private final class ProgressBox: @unchecked Sendable {
     private let lock = NSLock()
     nonisolated(unsafe) private var lastReportedPct = -1

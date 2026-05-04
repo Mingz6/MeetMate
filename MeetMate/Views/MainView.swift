@@ -82,10 +82,14 @@ struct MainView: View {
             .toggleStyle(.checkbox)
             .padding(.horizontal)
 
-            if !llm.isLoaded {
+            if !llm.isLoaded && llm.activeProvider != .cloud {
                 ModelLoadingBanner(progress: llm.loadProgress, modelName: LLMService.recommendedModel().displayName)
                     .padding(.horizontal)
             }
+
+            // Provider status bar
+            ProviderStatusBar(llm: llm)
+                .padding(.horizontal)
 
             HStack(spacing: 16) {
                 if showLive || showPolished {
@@ -138,13 +142,16 @@ struct MainView: View {
                 print("[Whisper] loadModel failed:", error)
                 loadError = "Whisper: \(error.localizedDescription)"
             }
+            // Load local model as fallback — non-fatal if cloud is configured
             do {
                 let override = UserDefaults.standard.string(forKey: "modelChoiceOverride") ?? ""
                 let choice = LLMService.ModelChoice(rawValue: override)
-                try await llm.load(choice)
+                try await llm.loadLocalModel(choice)
             } catch {
-                print("[LLM] load failed:", error)
-                loadError = "LLM: \(error.localizedDescription)"
+                print("[LLM] local model load failed:", error)
+                if llm.activeProvider == .recordingOnly {
+                    loadError = "LLM: \(error.localizedDescription)"
+                }
             }
         }
     }
