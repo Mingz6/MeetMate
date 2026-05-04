@@ -70,6 +70,49 @@ final class AzureOpenAIProvider: LLMProvider, @unchecked Sendable {
         return try parseResponse(data)
     }
 
+    /// Generate with a vision (image + text) prompt. Uses the same deployment — requires GPT-4o or equivalent.
+    func generateWithVision(prompt: String, imageJPEG: Data, maxTokens: Int) async throws -> LLMResult {
+        guard let endpoint = KeychainHelper.get(forKey: KeychainHelper.azureEndpointKey),
+              let apiKey = KeychainHelper.get(forKey: KeychainHelper.azureAPIKeyKey),
+              let deployment = KeychainHelper.get(forKey: KeychainHelper.azureDeploymentKey) else {
+            throw LLMProviderError.notConfigured("Azure OpenAI endpoint, API key, or deployment missing from Keychain")
+        }
+
+        let url = buildURL(endpoint: endpoint, deployment: deployment)
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(apiKey, forHTTPHeaderField: "api-key")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let base64 = imageJPEG.base64EncodedString()
+        let message = ChatCompletionRequest.Message(role: "user", text: prompt, imageBase64: base64)
+        let body = ChatCompletionRequest(
+            messages: [message],
+            max_tokens: maxTokens,
+            temperature: 0.3
+        )
+        request.httpBody = try JSONEncoder().encode(body)
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw LLMProviderError.networkError(error)
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw LLMProviderError.parseError("Non-HTTP response")
+        }
+
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            let body = String(data: data, encoding: .utf8) ?? "(binary)"
+            throw LLMProviderError.requestFailed(statusCode: httpResponse.statusCode, body: body)
+        }
+
+        return try parseResponse(data)
+    }
+
     /// Streaming generation — yields partial text chunks as they arrive.
     func generateStreaming(prompt: String, maxTokens: Int) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
@@ -163,7 +206,59 @@ private struct ChatCompletionRequest: Encodable {
 
     struct Message: Encodable {
         let role: String
-        let content: String
+        let content: MessageContent
+
+        /// Simple text-only message.
+        init(role: String, content: String) {
+            self.role = role
+            self.content = .text(content)
+        }
+
+        /// Multimodal message with text + image.
+        init(role: String, text: String, imageBase64: String, mimeType: String = "image/jpeg") {
+            self.role = role
+            self.content = .multimodal([
+                .init(type: "text", text: text, imageUrl: nil),
+                .init(type: "image_url", text: nil, imageUrl: .init(url: "data:\(mimeType);base64,\(imageBase64)"))
+            ])
+        }
+    }
+
+    enum MessageContent: Encodable {
+        case text(String)
+        case multimodal([ContentPart])
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            switch self {
+            case .text(let str):
+                try container.encode(str)
+            case .multimodal(let parts):
+                try container.encode(parts)
+            }
+        }
+    }
+
+    struct ContentPart: Encodable {
+        let type: String
+        let text: String?
+        let imageUrl: ImageURL?
+
+        enum CodingKeys: String, CodingKey {
+            case type, text
+            case imageUrl = "image_url"
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(type, forKey: .type)
+            if let text { try container.encode(text, forKey: .text) }
+            if let imageUrl { try container.encode(imageUrl, forKey: .imageUrl) }
+        }
+    }
+
+    struct ImageURL: Encodable {
+        let url: String
     }
 }
 

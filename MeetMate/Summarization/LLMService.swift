@@ -190,6 +190,30 @@ final class LLMService: ObservableObject {
         }
     }
 
+    // MARK: - Vision (cloud-only)
+
+    /// Generate with a screen frame + text prompt. Cloud-only (GPT-4o vision).
+    /// Returns nil if cloud is unavailable (vision has no local fallback).
+    func generateWithVision(prompt: String, imageJPEG: Data, maxTokens: Int = 300) async -> String? {
+        guard activeProvider == .cloud else { return nil }
+        isGenerating = true
+        defer { isGenerating = false }
+
+        do {
+            let result = try await azure.generateWithVision(prompt: prompt, imageJPEG: imageJPEG, maxTokens: maxTokens)
+            reachability.reportSuccess()
+            if let usage = result.usage {
+                sessionUsage.add(usage)
+            }
+            return result.text
+        } catch {
+            print("[LLM] vision call failed: \(error.localizedDescription)")
+            reachability.reportFailure()
+            resolveActiveProvider()
+            return nil
+        }
+    }
+
     // MARK: - Replay queue drain
 
     /// Attempt to drain replay queue. Call when cloud comes back.

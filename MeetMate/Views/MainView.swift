@@ -11,11 +11,14 @@ struct MainView: View {
     @StateObject private var cheatsheet: CheatsheetGenerator
     @StateObject private var replier: ReplyGenerator
     @StateObject private var polisher: TranscriptPolisher
+    @StateObject private var frameCapture = FrameCaptureService()
+    @StateObject private var vision: VisionService
 
     @AppStorage("userName") private var userName: String = "Ming"
     @AppStorage("showLive") private var showLive: Bool = true
     @AppStorage("showPolished") private var showPolished: Bool = true
     @AppStorage("showCheatsheet") private var showCheatsheet: Bool = true
+    @AppStorage("videoCaptureEnabled") private var videoCaptureEnabled: Bool = false
     @State private var currentMeeting: Meeting?
     @State private var startError: String?
     @State private var loadError: String?
@@ -33,6 +36,7 @@ struct MainView: View {
         _cheatsheet = StateObject(wrappedValue: CheatsheetGenerator(llm: llmInstance))
         _replier = StateObject(wrappedValue: ReplyGenerator(llm: llmInstance))
         _polisher = StateObject(wrappedValue: TranscriptPolisher(llm: llmInstance))
+        _vision = StateObject(wrappedValue: VisionService(llm: llmInstance))
     }
 
     var body: some View {
@@ -55,6 +59,8 @@ struct MainView: View {
                 Toggle(isOn: $showPolished) { Label("Polished", systemImage: "wand.and.stars") }
                 Toggle(isOn: $showCheatsheet) { Label("Topic summary", systemImage: "lightbulb") }
                 Toggle(isOn: $showContext) { Label("Context", systemImage: "doc.text") }
+                Toggle(isOn: $videoCaptureEnabled) { Label("Screen", systemImage: "camera.metering.spot") }
+                    .help("Capture screen frames for vision analysis (uses cloud LLM tokens)")
                 Spacer()
                 Button(action: copyTranscript) {
                     Label("Copy transcript", systemImage: "doc.on.doc")
@@ -276,6 +282,23 @@ struct MainView: View {
                 transcriptProvider: { transcriber.liveTranscript },
                 cheatsheetProvider: { cheatsheet.current }
             )
+
+            // Start frame capture + vision analysis (if enabled)
+            frameCapture.isEnabled = videoCaptureEnabled
+            if videoCaptureEnabled {
+                frameCapture.onFrame = { [weak storage] frame in
+                    storage?.writeFrame(jpeg: frame.jpeg, timestamp: frame.timestamp)
+                    storage?.pruneFrames()
+                }
+                try? await frameCapture.start(meetingStart: now)
+
+                vision.frameProvider = { [weak storage] in storage?.latestFrame() }
+                vision.transcriptProvider = { transcriber.liveTranscript }
+                vision.onScreenContext = { [weak cheatsheet] desc in
+                    cheatsheet?.current.screenContext = desc
+                }
+                vision.startRolling()
+            }
         }
     }
 
@@ -284,6 +307,8 @@ struct MainView: View {
         cheatsheet.stopRolling()
         polisher.stop()
         replier.stopWatching()
+        frameCapture.stop()
+        vision.stopRolling()
         currentMeeting?.endedAt = .now
 
         // Stop cloud STT

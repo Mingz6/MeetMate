@@ -28,6 +28,14 @@ struct CheatsheetView: View {
                 Section("Action items") {
                     bulletList(sheet.actionItems)
                 }
+
+                if !sheet.screenContext.isEmpty {
+                    Section("On screen") {
+                        Text(sheet.screenContext)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
             .padding()
         }

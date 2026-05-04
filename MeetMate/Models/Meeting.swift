@@ -59,6 +59,7 @@ struct Cheatsheet {
     var keyPoints: [String] = []
     var openQuestions: [String] = []
     var actionItems: [String] = []
+    var screenContext: String = "" // Latest vision analysis of what's on screen
     var lastUpdated: Date = .now
 }
 
