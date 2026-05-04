@@ -44,6 +44,9 @@ final class TranscriptionService: ObservableObject {
     @Published private(set) var segments: [TranscriptSegment] = []
     @Published private(set) var modelStatus: String = "not loaded"
 
+    /// Set by the view layer before starting. Segments flush to disk on confirm.
+    var sessionStorage: SessionStorage?
+
     private var whisperKit: WhisperKit?
 
     private var samples: [Float] = []
@@ -105,6 +108,7 @@ final class TranscriptionService: ObservableObject {
         purgedDurationSec = 0
         lastConfirmedSec = 0
         meetingStartTime = nil
+        sessionStorage = nil
         streamTask?.cancel()
         streamTask = nil
     }
@@ -219,6 +223,14 @@ final class TranscriptionService: ObservableObject {
             text: text
         )
         segments.append(segment)
+
+        sessionStorage?.appendSegment(SegmentRecord(
+            startTime: TimeInterval(startSec),
+            endTime: TimeInterval(endSec),
+            text: text,
+            speaker: nil
+        ))
+
         print("[Whisper ✓] \(text)")
     }
 

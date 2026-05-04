@@ -33,6 +33,9 @@ final class TranscriptPolisher: ObservableObject {
     private let intervalSec: TimeInterval = 25
     private let minSegmentsToPolish = 6
 
+    /// Set by the view layer before starting. Polish output flushes to disk after each cycle.
+    var sessionStorage: SessionStorage?
+
     init(llm: LLMService) {
         self.llm = llm
     }
@@ -127,6 +130,8 @@ final class TranscriptPolisher: ObservableObject {
             }
             currentDraft = parsed.draft
             cursor = all.count
+
+            sessionStorage?.writePolished(paragraphs: finalizedParagraphs, draft: currentDraft)
         } catch {
             print("[Polish] failed: \(error)")
         }

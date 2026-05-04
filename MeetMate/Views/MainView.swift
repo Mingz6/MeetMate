@@ -19,6 +19,10 @@ struct MainView: View {
     @State private var currentMeeting: Meeting?
     @State private var startError: String?
     @State private var loadError: String?
+    @State private var sessionStorage: SessionStorage?
+    @State private var audioPlayer: AVAudioPlayer?
+    @State private var isPlaying = false
+    @State private var showDeleteConfirm = false
 
     init() {
         let llmInstance = LLMService()
@@ -53,6 +57,27 @@ struct MainView: View {
                 }
                 .disabled(transcriber.confirmedTranscript.isEmpty)
                 .help("Copy confirmed transcript to clipboard")
+
+                if !audio.isRecording, currentMeeting != nil {
+                    Divider().frame(height: 16)
+
+                    Button(action: togglePlayback) {
+                        Label(isPlaying ? "Pause" : "Play", systemImage: isPlaying ? "pause.circle" : "play.circle")
+                    }
+                    .disabled(!(currentMeeting?.hasSessionFolder ?? false))
+                    .help("Play back mic recording")
+
+                    Button(action: showInFinder) {
+                        Label("Show in Finder", systemImage: "folder")
+                    }
+                    .disabled(!(currentMeeting?.hasSessionFolder ?? false))
+                    .help("Open session folder in Finder")
+
+                    Button(role: .destructive, action: { showDeleteConfirm = true }) {
+                        Label("Delete", systemImage: "trash")
+                    }
+                    .help("Delete this meeting and its files")
+                }
             }
             .toggleStyle(.checkbox)
             .padding(.horizontal)
@@ -100,6 +125,12 @@ struct MainView: View {
         } message: {
             Text(loadError ?? "")
         }
+        .confirmationDialog("Delete this meeting?", isPresented: $showDeleteConfirm) {
+            Button("Delete meeting & files", role: .destructive) { deleteMeeting() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will permanently delete the recording, transcript, and all session files.")
+        }
         .task {
             do {
                 try await transcriber.loadModel()
@@ -119,15 +150,49 @@ struct MainView: View {
     }
 
     private func startMeeting() {
-        let meeting = Meeting(title: "Meeting \(Date().formatted(date: .abbreviated, time: .shortened))")
+        let now = Date()
+        let meeting = Meeting(title: "Meeting \(now.formatted(date: .abbreviated, time: .shortened))", startedAt: now)
         context.insert(meeting)
         currentMeeting = meeting
         transcriber.reset()
+        isPlaying = false
+        audioPlayer = nil
+
+        // Create session storage for disk persistence
+        var storage: SessionStorage?
+        do {
+            let isSystemAvailable: Bool
+            #if os(macOS)
+            isSystemAvailable = true
+            #else
+            isSystemAvailable = false
+            #endif
+            storage = try SessionStorage(startedAt: now, isSystemAudioAvailable: isSystemAvailable)
+            sessionStorage = storage
+            transcriber.sessionStorage = storage
+            polisher.sessionStorage = storage
+            cheatsheet.sessionStorage = storage
+        } catch {
+            print("[Meeting] failed to create session storage:", error)
+            // Non-fatal — recording works without disk persistence
+        }
 
         audio.onAudioBuffer = { [weak transcriber] buffer in
             Task { @MainActor in
                 transcriber?.ingest(buffer)
             }
+        }
+
+        if let writer = storage {
+            audio.onMicBuffer = { [weak writer] buffer in
+                writer?.writeMicBuffer(buffer)
+            }
+            audio.onSystemBuffer = { [weak writer] buffer in
+                writer?.writeSystemBuffer(buffer)
+            }
+        } else {
+            audio.onMicBuffer = nil
+            audio.onSystemBuffer = nil
         }
 
         Task {
@@ -138,6 +203,7 @@ struct MainView: View {
                 startError = error.localizedDescription
                 context.delete(meeting)
                 currentMeeting = nil
+                sessionStorage = nil
                 return
             }
             cheatsheet.startRolling { transcriber.liveTranscript }
@@ -156,7 +222,58 @@ struct MainView: View {
         polisher.stop()
         replier.stopWatching()
         currentMeeting?.endedAt = .now
-        // TODO: Phase 1.7 — run final summary, save markdown to meetingsArchivePath setting
+
+        // Final flush — write latest polished + cheatsheet, close audio files
+        if let storage = sessionStorage {
+            storage.writePolished(paragraphs: polisher.finalizedParagraphs, draft: polisher.currentDraft)
+            storage.writeCheatsheet(
+                topic: cheatsheet.current.currentTopic,
+                keyPoints: cheatsheet.current.keyPoints,
+                questions: cheatsheet.current.openQuestions,
+                actions: cheatsheet.current.actionItems
+            )
+            storage.finalizeAudio()
+        }
+
+        transcriber.sessionStorage = nil
+        polisher.sessionStorage = nil
+        cheatsheet.sessionStorage = nil
+    }
+
+    private func showInFinder() {
+        guard let meeting = currentMeeting else { return }
+        let url = meeting.sessionFolderURL
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: url.path)
+    }
+
+    private func deleteMeeting() {
+        guard let meeting = currentMeeting else { return }
+        // Delete session folder from disk
+        try? FileManager.default.removeItem(at: meeting.sessionFolderURL)
+        // Delete SwiftData record
+        context.delete(meeting)
+        currentMeeting = nil
+        sessionStorage = nil
+        audioPlayer = nil
+        isPlaying = false
+    }
+
+    private func togglePlayback() {
+        if let player = audioPlayer, player.isPlaying {
+            player.pause()
+            isPlaying = false
+            return
+        }
+
+        if audioPlayer == nil, let meeting = currentMeeting {
+            let micURL = meeting.sessionFolderURL.appendingPathComponent("mic.m4a")
+            guard FileManager.default.fileExists(atPath: micURL.path) else { return }
+            audioPlayer = try? AVAudioPlayer(contentsOf: micURL)
+            audioPlayer?.prepareToPlay()
+        }
+
+        audioPlayer?.play()
+        isPlaying = audioPlayer?.isPlaying ?? false
     }
 
     #if os(macOS)
