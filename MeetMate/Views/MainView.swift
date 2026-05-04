@@ -359,10 +359,18 @@ struct MainView: View {
         }
         // Replace live segments with batch (carries speaker IDs + better timestamps)
         transcriber.replaceSegments(with: batchSegments)
-        // Map speaker IDs onto existing polished paragraphs by time overlap
-        polisher.applySpeakerIds(from: batchSegments)
+
+        let speakerCount = batch.uniqueSpeakerCount
         batchReTranscriber = nil
-        print("[Batch] user accepted improved transcript (\(batchSegments.count) segments, \(batch.uniqueSpeakerCount) speakers)")
+        print("[Batch] user accepted improved transcript (\(batchSegments.count) segments, \(speakerCount) speakers)")
+
+        // Re-polish entire transcript with batch data + regenerate cheatsheet
+        Task {
+            await polisher.rePolishFromBatch(batchSegments)
+            let fullText = batchSegments.map(\.text).joined(separator: " ")
+            await cheatsheet.refresh(transcript: fullText)
+            print("[Batch] re-polish + cheatsheet refresh complete")
+        }
     }
 
     private func dismissBatchTranscript() {

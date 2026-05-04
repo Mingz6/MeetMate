@@ -470,4 +470,137 @@ final class TranscriptPolisher: ObservableObject {
         }
         return counts.max(by: { $0.value < $1.value })?.key
     }
+
+    // MARK: - Batch accept migration (§7d)
+
+    /// One-shot re-polish of the entire transcript using batch segments.
+    /// Preserves existing paragraph IDs where time ranges overlap; creates new IDs only for
+    /// genuinely new content. Called after user accepts batch re-transcription.
+    func rePolishFromBatch(_ batchSegments: [BatchReTranscriber.BatchSegment]) async {
+        guard !batchSegments.isEmpty else { return }
+
+        // Build numbered segment list from batch data
+        let numberedSegments = batchSegments.enumerated().map { idx, seg in
+            let startStr = formatTime(seg.startTime)
+            let endStr = formatTime(seg.endTime)
+            let speakerTag = seg.speaker.map { " [Speaker \($0)]" } ?? ""
+            return "[\(idx)] (\(startStr)–\(endStr))\(speakerTag) \(seg.text)"
+        }.joined(separator: "\n")
+
+        let contextBlock: String
+        if let ctx = contextProvider?(), !ctx.isEmpty {
+            contextBlock = "\nMeeting context (use for domain terms, names, and accuracy):\n\(ctx)\n\n"
+        } else {
+            contextBlock = ""
+        }
+
+        let prompt = """
+        You are an editor turning a complete meeting transcript into polished paragraphs.
+        \(contextBlock)Your job is to REWRITE the entire transcript into clean, readable paragraphs.
+
+        Rules:
+        - Fix grammar, punctuation, and capitalization.
+        - Merge short fragments into proper sentences.
+        - Group related sentences into paragraphs (2–5 sentences each).
+        - Light paraphrasing for clarity is allowed; preserve meaning, technical terms, and named entities exactly.
+        - Keep the speaker's voice (first person if they used it).
+        - DO NOT add facts the speaker didn't say.
+        - DO NOT copy the input verbatim — if a paragraph reads like raw transcript, rewrite it.
+        - Each finalized paragraph must specify which source segments it covers (sourceStart and sourceEnd, 0-based inclusive indices into the numbered list below).
+        - Segments tagged with speaker labels are from different speakers. Group same-speaker segments together when contiguous.
+        - ALL segments are finalized (this is a post-meeting batch — no trailing draft).
+
+        Output ONLY this JSON, no markdown fences, no commentary:
+        {
+          "finalized": [
+            {"text": "polished paragraph", "sourceStart": 0, "sourceEnd": 3}
+          ],
+          "draft": ""
+        }
+
+        Source segments (numbered with timestamps):
+        \(numberedSegments)
+        /no_think
+        """
+
+        isPolishing = true
+        defer { isPolishing = false }
+        let token = sessionToken
+
+        do {
+            let response = try await llm.generate(prompt: prompt, maxTokens: 3000)
+            guard token == sessionToken, !Task.isCancelled else { return }
+            guard let parsed = parseResponse(response) else {
+                print("[BatchPolish] parse failed: \(response.prefix(200))")
+                return
+            }
+
+            let oldParagraphs = paragraphs
+            var newParagraphs: [PolishedParagraph] = []
+
+            for item in parsed.finalized {
+                let text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { continue }
+
+                let startIdx = max(0, min(item.sourceStart, batchSegments.count - 1))
+                let endIdx = max(startIdx, min(item.sourceEnd, batchSegments.count - 1))
+                let startSec = Float(batchSegments[startIdx].startTime)
+                let endSec = Float(batchSegments[endIdx].endTime)
+
+                // Derive speaker from batch segments
+                let coveredBatch = batchSegments[startIdx...endIdx]
+                let speakerCounts = coveredBatch.compactMap(\.speaker).reduce(into: [Int: Int]()) { $0[$1, default: 0] += 1 }
+                let speakerId = speakerCounts.max(by: { $0.value < $1.value })?.key
+
+                // Try to match an existing paragraph by time overlap (>50% overlap)
+                let matchedId = findMatchingParagraph(startSec: startSec, endSec: endSec, in: oldParagraphs)
+
+                let para = PolishedParagraph(
+                    id: matchedId ?? idGenerator.next(),
+                    text: text,
+                    startSec: startSec,
+                    endSec: endSec,
+                    version: matchedId != nil ? (oldParagraphs.first(where: { $0.id == matchedId })?.version ?? 0) + 1 : 1,
+                    source: nil,
+                    speakerId: speakerId
+                )
+                newParagraphs.append(para)
+            }
+
+            paragraphs = newParagraphs
+            currentDraft = ""
+            cursor = batchSegments.count
+
+            // Persist
+            for para in newParagraphs {
+                sessionStorage?.appendParagraph(para)
+            }
+            sessionStorage?.writePolished(paragraphs: finalizedParagraphs, draft: "")
+
+            print("[BatchPolish] re-polished \(newParagraphs.count) paragraphs (\(newParagraphs.filter { $0.version > 1 }.count) ID-preserved)")
+        } catch {
+            print("[BatchPolish] failed: \(error)")
+        }
+    }
+
+    /// Find an existing paragraph whose time range overlaps >50% with the given range.
+    private func findMatchingParagraph(startSec: Float, endSec: Float, in existing: [PolishedParagraph]) -> String? {
+        let duration = endSec - startSec
+        guard duration > 0 else { return nil }
+
+        var bestId: String?
+        var bestOverlap: Float = 0
+
+        for para in existing {
+            let overlapStart = max(startSec, para.startSec)
+            let overlapEnd = min(endSec, para.endSec)
+            let overlap = max(0, overlapEnd - overlapStart)
+            let overlapRatio = overlap / duration
+            if overlapRatio > 0.5 && overlap > bestOverlap {
+                bestOverlap = overlap
+                bestId = para.id
+            }
+        }
+        return bestId
+    }
 }
