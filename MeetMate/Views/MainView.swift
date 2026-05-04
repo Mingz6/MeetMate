@@ -403,9 +403,10 @@ struct MainView: View {
             )
         case (false, true):
             PolishedTranscriptView(
-                finalizedParagraphs: polisher.finalizedParagraphs,
+                paragraphs: polisher.paragraphs,
                 currentDraft: polisher.currentDraft,
-                rawFallback: transcriber.liveTranscript
+                rawFallback: transcriber.liveTranscript,
+                onSeek: seekAudio
             )
         case (true, true):
             HStack(alignment: .top, spacing: 12) {
@@ -415,15 +416,29 @@ struct MainView: View {
                 )
                 .frame(maxWidth: .infinity)
                 PolishedTranscriptView(
-                    finalizedParagraphs: polisher.finalizedParagraphs,
+                    paragraphs: polisher.paragraphs,
                     currentDraft: polisher.currentDraft,
-                    rawFallback: transcriber.liveTranscript
+                    rawFallback: transcriber.liveTranscript,
+                    onSeek: seekAudio
                 )
                 .frame(maxWidth: .infinity)
             }
         case (false, false):
             EmptyView()
         }
+    }
+
+    private func seekAudio(_ seconds: Float) {
+        if audioPlayer == nil, let meeting = currentMeeting {
+            let micURL = meeting.sessionFolderURL.appendingPathComponent("mic.m4a")
+            guard FileManager.default.fileExists(atPath: micURL.path) else { return }
+            audioPlayer = try? AVAudioPlayer(contentsOf: micURL)
+            audioPlayer?.prepareToPlay()
+        }
+        guard let player = audioPlayer else { return }
+        player.currentTime = TimeInterval(seconds)
+        player.play()
+        isPlaying = true
     }
 }
 

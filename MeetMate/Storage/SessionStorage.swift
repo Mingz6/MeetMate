@@ -86,7 +86,19 @@ final class SessionStorage: Sendable {
         }
     }
 
-    // MARK: - Polished transcript
+    // MARK: - Polished paragraphs (append-only JSONL)
+
+    func appendParagraph(_ paragraph: PolishedParagraph) {
+        guard let data = try? JSONEncoder().encode(paragraph),
+              var line = String(data: data, encoding: .utf8) else { return }
+        line += "\n"
+        fileQueue.async { [sessionFolder] in
+            let url = sessionFolder.appendingPathComponent("paragraphs.jsonl")
+            Self.appendString(line, to: url)
+        }
+    }
+
+    // MARK: - Polished transcript (human-readable markdown)
 
     func writePolished(paragraphs: [String], draft: String) {
         fileQueue.async { [sessionFolder] in
