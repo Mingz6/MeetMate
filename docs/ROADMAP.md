@@ -58,13 +58,13 @@ Cloud is the new default. When the network is gone, MeetMate keeps capturing aud
 
 ### 4. Video capture ("eyes")
 
-- [ ] Extend ScreenCaptureKit `SCStream` with video output (already on the stream for audio)
-- [ ] Sample frames at low rate (1 fps or every 5s) — control disk + LLM cost
-- [ ] Save frames as JPEG in `Sessions/{id}/frames/` with timestamp filenames
+- [x] Extend ScreenCaptureKit `SCStream` with video output (already on the stream for audio)
+- [x] Sample frames at low rate (1 fps or every 5s) — control disk + LLM cost
+- [x] Save frames as JPEG in `Sessions/{id}/frames/` with timestamp filenames
 - [ ] Optional webcam input via AVCaptureSession
-- [ ] Vision LLM call — recent frame + transcript snippet → "what's on screen now" cheatsheet enrichment
-- [ ] UI toggle: video off by default (privacy + cost)
-- [ ] Storage cap — auto-prune frames older than N hours
+- [x] Vision LLM call — recent frame + transcript snippet → "what's on screen now" cheatsheet enrichment
+- [x] UI toggle: video off by default (privacy + cost)
+- [x] Storage cap — auto-prune frames older than N hours
 
 ### 5. Timestamps + stable paragraph IDs on polished transcript
 

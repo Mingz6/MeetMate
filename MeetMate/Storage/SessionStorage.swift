@@ -168,6 +168,61 @@ final class SessionStorage: Sendable {
         }
     }
 
+    // MARK: - Frames (video capture)
+
+    /// Maximum number of frames to keep per session. Oldest are pruned.
+    private static let maxFrames = 720 // ~1 hour at 5s interval
+
+    /// Save a captured frame as JPEG. Returns the file URL.
+    @discardableResult
+    func writeFrame(jpeg: Data, timestamp: TimeInterval) -> URL? {
+        let framesDir = sessionFolder.appendingPathComponent("frames", isDirectory: true)
+        let filename = String(format: "frame_%06.1f.jpg", timestamp)
+        let url = framesDir.appendingPathComponent(filename)
+
+        fileQueue.async {
+            try? FileManager.default.createDirectory(at: framesDir, withIntermediateDirectories: true)
+            try? jpeg.write(to: url)
+        }
+        return url
+    }
+
+    /// Prune old frames beyond the cap. Call periodically.
+    func pruneFrames() {
+        fileQueue.async { [sessionFolder] in
+            let framesDir = sessionFolder.appendingPathComponent("frames", isDirectory: true)
+            guard let files = try? FileManager.default.contentsOfDirectory(at: framesDir, includingPropertiesForKeys: [.creationDateKey])
+                .filter({ $0.pathExtension == "jpg" })
+                .sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) else { return }
+
+            let excess = files.count - Self.maxFrames
+            guard excess > 0 else { return }
+            for file in files.prefix(excess) {
+                try? FileManager.default.removeItem(at: file)
+            }
+            print("[Storage] pruned \(excess) old frame(s)")
+        }
+    }
+
+    /// URL of the frames directory.
+    var framesDirectory: URL { sessionFolder.appendingPathComponent("frames", isDirectory: true) }
+
+    /// Load the most recent frame as Data (for vision LLM calls).
+    func latestFrame() -> (data: Data, timestamp: TimeInterval)? {
+        let framesDir = sessionFolder.appendingPathComponent("frames", isDirectory: true)
+        guard let files = try? FileManager.default.contentsOfDirectory(at: framesDir, includingPropertiesForKeys: nil)
+            .filter({ $0.pathExtension == "jpg" })
+            .sorted(by: { $0.lastPathComponent > $1.lastPathComponent }),
+              let latest = files.first,
+              let data = try? Data(contentsOf: latest) else { return nil }
+
+        // Parse timestamp from filename: frame_000123.4.jpg
+        let name = latest.deletingPathExtension().lastPathComponent
+        let numStr = name.replacingOccurrences(of: "frame_", with: "")
+        let timestamp = TimeInterval(numStr) ?? 0
+        return (data, timestamp)
+    }
+
     // MARK: - Delete
 
     func deleteSessionFolder() throws {
