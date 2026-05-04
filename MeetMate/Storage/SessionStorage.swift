@@ -98,6 +98,20 @@ final class SessionStorage: Sendable {
         }
     }
 
+    /// Load all versions of a specific paragraph from paragraphs.jsonl (sync read for UI popover).
+    func loadVersionHistory(forId paragraphId: String) -> [PolishedParagraph] {
+        let url = sessionFolder.appendingPathComponent("paragraphs.jsonl")
+        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        let decoder = JSONDecoder()
+        return content.components(separatedBy: "\n")
+            .compactMap { line -> PolishedParagraph? in
+                guard !line.isEmpty, let data = line.data(using: .utf8) else { return nil }
+                return try? decoder.decode(PolishedParagraph.self, from: data)
+            }
+            .filter { $0.id == paragraphId }
+            .sorted { $0.version < $1.version }
+    }
+
     // MARK: - Polished transcript (human-readable markdown)
 
     func writePolished(paragraphs: [String], draft: String) {

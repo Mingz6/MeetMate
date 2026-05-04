@@ -406,7 +406,10 @@ struct MainView: View {
                 paragraphs: polisher.paragraphs,
                 currentDraft: polisher.currentDraft,
                 rawFallback: transcriber.liveTranscript,
-                onSeek: seekAudio
+                pendingRevisions: polisher.pendingRevisions,
+                onSeek: seekAudio,
+                onAcceptRevision: { polisher.acceptRevision($0) },
+                onRejectRevision: { polisher.rejectRevision($0) }
             )
         case (true, true):
             HStack(alignment: .top, spacing: 12) {
@@ -419,7 +422,10 @@ struct MainView: View {
                     paragraphs: polisher.paragraphs,
                     currentDraft: polisher.currentDraft,
                     rawFallback: transcriber.liveTranscript,
-                    onSeek: seekAudio
+                    pendingRevisions: polisher.pendingRevisions,
+                    onSeek: seekAudio,
+                    onAcceptRevision: { polisher.acceptRevision($0) },
+                    onRejectRevision: { polisher.rejectRevision($0) }
                 )
                 .frame(maxWidth: .infinity)
             }

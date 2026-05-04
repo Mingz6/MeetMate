@@ -25,6 +25,7 @@ final class TranscriptPolisher: ObservableObject {
     @Published private(set) var paragraphs: [PolishedParagraph] = []
     @Published private(set) var currentDraft: String = ""
     @Published private(set) var isPolishing = false
+    @Published private(set) var pendingRevisions: [ParagraphRevision] = []
 
     /// Legacy accessor for backward compat — just the text of finalized paragraphs.
     var finalizedParagraphs: [String] { paragraphs.map(\.text) }
@@ -45,6 +46,10 @@ final class TranscriptPolisher: ObservableObject {
     private var sessionToken: Int = 0
     private let intervalSec: TimeInterval = 25
     private let minSegmentsToPolish = 6
+    private var polishCycleCount: Int = 0
+    private let rePolishEveryN = 3
+    private let rePolishWindowSize = 5
+    private let rePolishMinAgeSec: TimeInterval = 10
 
     /// Set by the view layer before starting. Polish output flushes to disk after each cycle.
     var sessionStorage: SessionStorage?
@@ -74,6 +79,11 @@ final class TranscriptPolisher: ObservableObject {
             try? await Task.sleep(for: .seconds(8))
             while !Task.isCancelled {
                 await self.polishOnce()
+                self.polishCycleCount += 1
+                // Re-polish every N cycles (cloud-only)
+                if self.polishCycleCount % self.rePolishEveryN == 0 {
+                    await self.rePolishOnce()
+                }
                 try? await Task.sleep(for: .seconds(self.intervalSec))
             }
         }
@@ -203,6 +213,149 @@ final class TranscriptPolisher: ObservableObject {
     private struct PolishResponse {
         let finalized: [FinalizedItem]
         let draft: String
+    }
+
+    // MARK: - Re-polish (§6)
+
+    private func rePolishOnce() async {
+        // Cloud-only — local models aren't good enough for revision judgment
+        guard llm.activeProvider == .cloud else { return }
+        guard paragraphs.count >= 3 else { return }
+
+        // Window: last N paragraphs, excluding those newer than ~10s (still being polished live)
+        let cutoffEndSec: Float
+        if let transcriber, let lastSeg = transcriber.segments.last {
+            cutoffEndSec = Float(lastSeg.endTime) - Float(rePolishMinAgeSec)
+        } else {
+            cutoffEndSec = .greatestFiniteMagnitude
+        }
+
+        let eligible = paragraphs.filter { $0.endSec < cutoffEndSec }
+        guard eligible.count >= 2 else { return }
+
+        let window = Array(eligible.suffix(rePolishWindowSize))
+        let windowText = window.map { "[\($0.id)] \($0.timestampLabel) \($0.text)" }.joined(separator: "\n")
+        let windowIds = window.map(\.id)
+
+        let contextBlock: String
+        if let ctx = contextProvider?(), !ctx.isEmpty {
+            contextBlock = "\nMeeting context:\n\(ctx)\n\n"
+        } else {
+            contextBlock = ""
+        }
+
+        let prompt = """
+        You are a senior editor reviewing polished meeting notes. Below are recent paragraphs (each tagged with their stable ID).
+        \(contextBlock)
+        Your task: look for improvements. Common reasons to revise:
+        - Speaker corrected themselves later ("Actually, I meant X not Y")
+        - Two paragraphs can be merged for better flow
+        - A paragraph is awkward or could be clearer with minor rewording
+        - Factual inconsistency between adjacent paragraphs
+
+        If NO revision is needed, return: {"revisions": []}
+
+        If revision IS needed, return:
+        {
+          "revisions": [
+            {
+              "replaceIds": ["p_000003", "p_000004"],
+              "newText": "The merged/revised paragraph text here.",
+              "reason": "Brief explanation of why this revision improves the text"
+            }
+          ]
+        }
+
+        Rules:
+        - Only reference IDs from the list below — never invent IDs.
+        - Maximum 2 revisions per cycle (don't over-edit).
+        - Preserve timestamps/meaning — you're polishing, not rewriting from scratch.
+        - If the text already reads well, return empty revisions array.
+
+        Current paragraphs:
+        \(windowText)
+        /no_think
+        """
+
+        let token = sessionToken
+        do {
+            let response = try await llm.generate(prompt: prompt, maxTokens: 800)
+            guard token == sessionToken, !Task.isCancelled else { return }
+            guard let revisions = parseRevisionResponse(response, validIds: Set(windowIds)) else {
+                print("[RePolish] parse failed: \(response.prefix(200))")
+                return
+            }
+            if revisions.isEmpty {
+                print("[RePolish] no revisions suggested")
+                return
+            }
+            pendingRevisions.append(contentsOf: revisions)
+            print("[RePolish] +\(revisions.count) revision(s) pending")
+        } catch {
+            print("[RePolish] failed: \(error)")
+        }
+    }
+
+    // MARK: - Accept / Reject revisions
+
+    func acceptRevision(_ revision: ParagraphRevision) {
+        pendingRevisions.removeAll { $0.id == revision.id }
+
+        // Find the paragraphs being replaced, merge their time range
+        let targets = paragraphs.filter { revision.replaceIds.contains($0.id) }
+        guard !targets.isEmpty else { return }
+
+        let firstId = targets.first!.id
+        let startSec = targets.map(\.startSec).min() ?? 0
+        let endSec = targets.map(\.endSec).max() ?? 0
+        let maxVersion = targets.map(\.version).max() ?? 0
+
+        // Build the revised paragraph (same ID as the first target, bumped version)
+        let revised = PolishedParagraph(
+            id: firstId,
+            text: revision.newText,
+            startSec: startSec,
+            endSec: endSec,
+            version: maxVersion + 1
+        )
+
+        // Replace in the paragraphs array: remove all targets, insert revised at first target's position
+        if let insertIdx = paragraphs.firstIndex(where: { $0.id == firstId }) {
+            paragraphs.removeAll { revision.replaceIds.contains($0.id) }
+            let safeIdx = min(insertIdx, paragraphs.count)
+            paragraphs.insert(revised, at: safeIdx)
+        }
+
+        // Persist the revised version (append-only — old versions stay in the file)
+        sessionStorage?.appendParagraph(revised)
+        sessionStorage?.writePolished(paragraphs: finalizedParagraphs, draft: currentDraft)
+        print("[RePolish] accepted revision for \(revision.replaceIds.joined(separator: ", "))")
+    }
+
+    func rejectRevision(_ revision: ParagraphRevision) {
+        pendingRevisions.removeAll { $0.id == revision.id }
+        print("[RePolish] rejected revision for \(revision.replaceIds.joined(separator: ", "))")
+    }
+
+    private func parseRevisionResponse(_ text: String, validIds: Set<String>) -> [ParagraphRevision]? {
+        guard let json = extractJSON(from: text),
+              let data = json.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let revisions = obj["revisions"] as? [[String: Any]] else {
+            return nil
+        }
+
+        var results: [ParagraphRevision] = []
+        for entry in revisions {
+            guard let replaceIds = entry["replaceIds"] as? [String],
+                  let newText = entry["newText"] as? String,
+                  !replaceIds.isEmpty, !newText.isEmpty else { continue }
+            // Only accept revisions referencing valid paragraph IDs
+            guard replaceIds.allSatisfy({ validIds.contains($0) }) else { continue }
+            let reason = (entry["reason"] as? String) ?? ""
+            results.append(ParagraphRevision(replaceIds: replaceIds, newText: newText, reason: reason))
+        }
+        return results
     }
 
     private func parseResponse(_ text: String) -> PolishResponse? {

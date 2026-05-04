@@ -83,14 +83,14 @@ Critical: this builds the contract that #6 re-polish will mutate. Get the IDs ri
 
 Depends on #5 (stable IDs + version field) and #2 (cloud LLM). Re-polish never invents IDs — only references existing ones.
 
-- [ ] Trigger: every N cycles, take the last K finalized paragraphs by ID + new context, ask LLM to revise
-- [ ] Polish JSON gains `revisions`: `[{"replaceIds": ["p_000003","p_000004"], "newText": "...", "reason": "speaker corrected themselves"}]`
-- [ ] Append to `paragraphs.jsonl` as new versions (append-only, same `id`, bumped `version`)
-- [ ] UI: strikethrough old + new text, accept/reject
-- [ ] Edit trail view — click a paragraph to see all versions
-- [ ] Test case: "I want to buy an apple. Well, banana is better." → "Speaker decided on banana over apple."
-- [ ] Bound the re-polish window (last 5 paragraphs, **excluding** paragraphs newer than ~10s — those are likely still being revised by the live polisher)
-- [ ] Cloud-only — skip in `recordingOnly` mode
+- [x] Trigger: every N cycles, take the last K finalized paragraphs by ID + new context, ask LLM to revise
+- [x] Polish JSON gains `revisions`: `[{"replaceIds": ["p_000003","p_000004"], "newText": "...", "reason": "speaker corrected themselves"}]`
+- [x] Append to `paragraphs.jsonl` as new versions (append-only, same `id`, bumped `version`)
+- [x] UI: strikethrough old + new text, accept/reject
+- [x] Edit trail view — click a paragraph to see all versions
+- [x] Test case: "I want to buy an apple. Well, banana is better." → "Speaker decided on banana over apple."
+- [x] Bound the re-polish window (last 5 paragraphs, **excluding** paragraphs newer than ~10s — those are likely still being revised by the live polisher)
+- [x] Cloud-only — skip in `recordingOnly` mode
 
 ### 7. Transcription quality — Azure AI Speech, VAD, offline re-transcribe pass
 
