@@ -197,6 +197,7 @@ struct SegmentRecord: Codable, Sendable {
     let endTime: TimeInterval
     let text: String
     let speaker: String?
+    let source: AudioSource?
 }
 
 // MARK: - Audio file writer (M4A/AAC incremental)

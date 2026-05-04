@@ -144,10 +144,10 @@ After the meeting ends, run a higher-quality batch transcription on the saved `m
 
 #### 7e. Separate mic + system audio streams
 
-- [ ] Stop mixing mic + ScreenCaptureKit into one mono stream before STT
-- [ ] Send mic and system audio as **two separate Azure Speech recognizers** (or one stereo stream with channel routing)
-- [ ] Tag segments by source: `[me]` vs `[remote]`
-- [ ] Eliminates cross-talk degradation on overlapping speech
+- [x] Stop mixing mic + ScreenCaptureKit into one mono stream before STT
+- [x] Send mic and system audio as **two separate Azure Speech recognizers** (or one stereo stream with channel routing)
+- [x] Tag segments by source: `[me]` vs `[remote]`
+- [x] Eliminates cross-talk degradation on overlapping speech
 - [ ] Combines with Azure's diarization — mic stream gets per-speaker labels for the in-room people, system stream gets per-speaker labels for the Zoom side
 
 ## Execution order

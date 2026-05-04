@@ -55,14 +55,18 @@ final class TranscriptionService: ObservableObject {
 
     // MARK: - Cloud STT
 
-    private var cloudSTT: AzureSpeechSTT?
+    private var cloudSTTMic: AzureSpeechSTT?
+    private var cloudSTTSystem: AzureSpeechSTT?
     let vadGate = VADGate()
+    private let vadGateSystem = VADGate()
 
     /// Vocabulary terms for STT biasing (from context + user edits).
     var vocabularyTerms: [String] = []
 
-    /// Total seconds of audio sent to cloud STT this session.
-    var cloudAudioSecondsSent: Float { cloudSTT?.totalAudioSecondsSent ?? 0 }
+    /// Total seconds of audio sent to cloud STT this session (both streams combined).
+    var cloudAudioSecondsSent: Float {
+        (cloudSTTMic?.totalAudioSecondsSent ?? 0) + (cloudSTTSystem?.totalAudioSecondsSent ?? 0)
+    }
 
     // MARK: - Local WhisperKit
 
@@ -92,14 +96,15 @@ final class TranscriptionService: ObservableObject {
 
     // MARK: - Mode Resolution
 
-    /// Configure cloud STT. Call before starting recording.
+    /// Configure cloud STT. Creates two recognizer instances: one for mic, one for system audio.
     func configureCloudSTT(region: String, apiKey: String, language: String = "en-US") {
-        cloudSTT = AzureSpeechSTT(region: region, apiKey: apiKey, language: language)
+        cloudSTTMic = AzureSpeechSTT(region: region, apiKey: apiKey, language: language, audioSource: .mic)
+        cloudSTTSystem = AzureSpeechSTT(region: region, apiKey: apiKey, language: language, audioSource: .system)
     }
 
     /// Resolve which STT mode to use based on configuration and network.
     func resolveMode(networkAvailable: Bool, cloudAvailable: Bool) {
-        if let cloud = cloudSTT, cloud.isConfigured, networkAvailable, cloudAvailable {
+        if let mic = cloudSTTMic, mic.isConfigured, networkAvailable, cloudAvailable {
             sttMode = .cloud
             modelStatus = "cloud ready"
         } else if whisperKit != nil {
@@ -131,61 +136,107 @@ final class TranscriptionService: ObservableObject {
         print("[Whisper] model ready")
     }
 
-    func ingest(_ buffer: AVAudioPCMBuffer) {
+    /// Ingest mic audio — routed to the mic cloud recognizer or local fallback.
+    func ingestMic(_ buffer: AVAudioPCMBuffer) {
         if meetingStartTime == nil { meetingStartTime = Date() }
         guard let downs = downsampleToMono16k(buffer) else { return }
 
         switch sttMode {
         case .cloud:
-            // VAD gate filters silence before sending to cloud
             if let passed = vadGate.process(downs) {
                 Task { [weak self] in
-                    await self?.cloudSTT?.ingestAudio(passed)
+                    await self?.cloudSTTMic?.ingestAudio(passed)
                 }
             }
         case .local:
+            // Local WhisperKit gets all audio (mixed) — mic feeds in here
             samples.append(contentsOf: downs)
             if streamTask == nil, whisperKit != nil {
                 startStreamLoop()
             }
         case .recordingOnly:
-            break // Audio is still captured by AudioCaptureService — no STT
+            break
         }
     }
 
-    /// Start cloud continuous recognition. Call after configuring cloud STT.
-    func startCloudRecognition() async {
-        guard sttMode == .cloud, let cloud = cloudSTT else { return }
-        vadGate.reset()
+    /// Ingest system audio (ScreenCaptureKit loopback) — routed to the system cloud recognizer.
+    /// Falls through to local WhisperKit buffer (mixed) in local mode.
+    func ingestSystem(_ buffer: AVAudioPCMBuffer) {
+        if meetingStartTime == nil { meetingStartTime = Date() }
+        guard let downs = downsampleToMono16k(buffer) else { return }
 
-        // Inject vocabulary terms for phrase list biasing
-        cloud.phraseList = vocabularyTerms
-
-        do {
-            try await cloud.startContinuousRecognition(
-                onSegment: { [weak self] segment in
-                    Task { @MainActor [weak self] in
-                        self?.handleCloudSegment(segment)
-                    }
-                },
-                onError: { [weak self] error in
-                    Task { @MainActor [weak self] in
-                        print("[STT Cloud] error: \(error)")
-                        // Fall back to local if available
-                        if self?.whisperKit != nil {
-                            self?.sttMode = .local
-                            self?.modelStatus = "ready (fallback)"
-                            print("[STT] fell back to local WhisperKit")
-                        } else {
-                            self?.sttMode = .recordingOnly
-                            self?.modelStatus = "recording only"
-                        }
-                    }
+        switch sttMode {
+        case .cloud:
+            if let passed = vadGateSystem.process(downs) {
+                Task { [weak self] in
+                    await self?.cloudSTTSystem?.ingestAudio(passed)
                 }
-            )
-        } catch {
-            print("[STT Cloud] start failed: \(error)")
-            // Fall back to local
+            }
+        case .local:
+            // Local WhisperKit gets all audio mixed together
+            samples.append(contentsOf: downs)
+            if streamTask == nil, whisperKit != nil {
+                startStreamLoop()
+            }
+        case .recordingOnly:
+            break
+        }
+    }
+
+    /// Legacy single-stream ingest. Used by iOS (mic-only) or any path that doesn't separate streams.
+    func ingest(_ buffer: AVAudioPCMBuffer) {
+        ingestMic(buffer)
+    }
+
+    /// Start cloud continuous recognition on both mic and system recognizers.
+    func startCloudRecognition() async {
+        guard sttMode == .cloud else { return }
+        vadGate.reset()
+        vadGateSystem.reset()
+
+        // Inject vocabulary terms for phrase list biasing on both recognizers
+        cloudSTTMic?.phraseList = vocabularyTerms
+        cloudSTTSystem?.phraseList = vocabularyTerms
+
+        let segmentHandler: @Sendable (STTSegment) -> Void = { [weak self] segment in
+            Task { @MainActor [weak self] in
+                self?.handleCloudSegment(segment)
+            }
+        }
+        let errorHandler: @Sendable (Error) -> Void = { [weak self] error in
+            Task { @MainActor [weak self] in
+                print("[STT Cloud] error: \(error)")
+                if self?.whisperKit != nil {
+                    self?.sttMode = .local
+                    self?.modelStatus = "ready (fallback)"
+                    print("[STT] fell back to local WhisperKit")
+                } else {
+                    self?.sttMode = .recordingOnly
+                    self?.modelStatus = "recording only"
+                }
+            }
+        }
+
+        // Start mic recognizer
+        if let mic = cloudSTTMic {
+            do {
+                try await mic.startContinuousRecognition(onSegment: segmentHandler, onError: errorHandler)
+            } catch {
+                print("[STT Cloud] mic start failed: \(error)")
+            }
+        }
+
+        // Start system recognizer
+        if let sys = cloudSTTSystem {
+            do {
+                try await sys.startContinuousRecognition(onSegment: segmentHandler, onError: errorHandler)
+            } catch {
+                print("[STT Cloud] system start failed: \(error)")
+            }
+        }
+
+        // If both failed, fall back
+        if cloudSTTMic == nil && cloudSTTSystem == nil {
             if whisperKit != nil {
                 sttMode = .local
                 modelStatus = "ready (fallback)"
@@ -196,9 +247,10 @@ final class TranscriptionService: ObservableObject {
         }
     }
 
-    /// Stop cloud recognition.
+    /// Stop cloud recognition on both streams.
     func stopCloudRecognition() async {
-        await cloudSTT?.stopContinuousRecognition()
+        await cloudSTTMic?.stopContinuousRecognition()
+        await cloudSTTSystem?.stopContinuousRecognition()
     }
 
     /// Replace the confirmed transcript with a batch-processed version.
@@ -213,7 +265,7 @@ final class TranscriptionService: ObservableObject {
         if segment.isFinal {
             let text = stripNoise(segment.text)
             guard !text.isEmpty else { return }
-            appendConfirmed(text: text, startSec: segment.startSec, endSec: segment.endSec)
+            appendConfirmed(text: text, startSec: segment.startSec, endSec: segment.endSec, source: segment.source)
             lastConfirmedSec = segment.endSec
             unconfirmedText = ""
             updateLive()
@@ -239,10 +291,12 @@ final class TranscriptionService: ObservableObject {
         streamTask?.cancel()
         streamTask = nil
         vadGate.reset()
+        vadGateSystem.reset()
 
-        // Stop cloud STT if running
+        // Stop both cloud STT recognizers
         Task { [weak self] in
-            await self?.cloudSTT?.stopContinuousRecognition()
+            await self?.cloudSTTMic?.stopContinuousRecognition()
+            await self?.cloudSTTSystem?.stopContinuousRecognition()
         }
     }
 
@@ -351,13 +405,14 @@ final class TranscriptionService: ObservableObject {
         updateLive()
     }
 
-    private func appendConfirmed(text: String, startSec: Float, endSec: Float) {
+    private func appendConfirmed(text: String, startSec: Float, endSec: Float, source: AudioSource = .mixed) {
         let prefix = confirmedTranscript.isEmpty ? "" : " "
         confirmedTranscript += prefix + text
         let segment = TranscriptSegment(
             startTime: TimeInterval(startSec),
             endTime: TimeInterval(endSec),
-            text: text
+            text: text,
+            source: source
         )
         segments.append(segment)
 
@@ -365,10 +420,12 @@ final class TranscriptionService: ObservableObject {
             startTime: TimeInterval(startSec),
             endTime: TimeInterval(endSec),
             text: text,
-            speaker: nil
+            speaker: nil,
+            source: source
         ))
 
-        print("[Whisper ✓] \(text)")
+        let tag = source == .mixed ? "" : " [\(source.rawValue)]"
+        print("[STT ✓]\(tag) \(text)")
     }
 
     private func updateLive() {

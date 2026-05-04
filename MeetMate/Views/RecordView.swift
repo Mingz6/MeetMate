@@ -158,18 +158,13 @@ struct RecordView: View {
             print("[Meeting] failed to create session storage:", error)
         }
 
-        audio.onAudioBuffer = { [weak transcriber] buffer in
-            Task { @MainActor in
-                transcriber?.ingest(buffer)
-            }
-        }
+        audio.onAudioBuffer = nil
 
-        if let writer = storage {
-            audio.onMicBuffer = { [weak writer] buffer in
-                writer?.writeMicBuffer(buffer)
+        audio.onMicBuffer = { [weak transcriber, weak storage] buffer in
+            Task { @MainActor in
+                transcriber?.ingestMic(buffer)
             }
-        } else {
-            audio.onMicBuffer = nil
+            storage?.writeMicBuffer(buffer)
         }
 
         Task {

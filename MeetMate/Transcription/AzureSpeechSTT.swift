@@ -16,6 +16,9 @@ final class AzureSpeechSTT: @unchecked Sendable {
     private let apiKey: String
     private let language: String
 
+    /// Audio source label — tagged onto every emitted STTSegment.
+    let audioSource: AudioSource
+
     // MARK: - State
 
     private var webSocket: URLSessionWebSocketTask?
@@ -37,10 +40,11 @@ final class AzureSpeechSTT: @unchecked Sendable {
 
     // MARK: - Init
 
-    init(region: String, apiKey: String, language: String = "en-US") {
+    init(region: String, apiKey: String, language: String = "en-US", audioSource: AudioSource = .mixed) {
         self.region = region
         self.apiKey = apiKey
         self.language = language
+        self.audioSource = audioSource
         self.session = URLSession(configuration: .default)
     }
 
@@ -291,7 +295,8 @@ final class AzureSpeechSTT: @unchecked Sendable {
             text: text,
             startSec: offset,
             endSec: offset + duration,
-            isFinal: false
+            isFinal: false,
+            source: audioSource
         )
         onSegment?(segment)
     }
@@ -325,7 +330,8 @@ final class AzureSpeechSTT: @unchecked Sendable {
             text: text,
             startSec: offset,
             endSec: offset + duration,
-            isFinal: true
+            isFinal: true,
+            source: audioSource
         )
         onSegment?(segment)
     }

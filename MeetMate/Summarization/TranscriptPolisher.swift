@@ -103,11 +103,17 @@ final class TranscriptPolisher: ObservableObject {
 
         let pending = Array(all[cursor..<all.count])
 
-        // Build numbered segment list with timestamps for the LLM
+        // Build numbered segment list with timestamps and source tags for the LLM
         let numberedSegments = pending.enumerated().map { idx, seg in
             let startStr = formatTime(seg.startTime)
             let endStr = formatTime(seg.endTime)
-            return "[\(idx)] (\(startStr)–\(endStr)) \(seg.text)"
+            let sourceTag: String
+            switch seg.source {
+            case "mic": sourceTag = " [me]"
+            case "system": sourceTag = " [remote]"
+            default: sourceTag = ""
+            }
+            return "[\(idx)] (\(startStr)–\(endStr))\(sourceTag) \(seg.text)"
         }.joined(separator: "\n")
 
         let contextBlock: String
@@ -130,6 +136,7 @@ final class TranscriptPolisher: ObservableObject {
         - DO NOT add facts the speaker didn't say.
         - DO NOT copy the input verbatim — if a paragraph reads like raw transcript, rewrite it.
         - Each finalized paragraph must specify which source segments it covers (sourceStart and sourceEnd, 0-based inclusive indices into the numbered list below).
+        - Segments tagged [me] are from the local microphone (the user). Segments tagged [remote] are from system audio (remote meeting participants). Prefer grouping same-source segments into the same paragraph when they're contiguous.
         - Distinguish FINALIZED (speaker has moved on) from DRAFT (trailing thought still developing).
         - Prefer leaving the most recent 1–2 sentences in draft.
 
@@ -174,12 +181,17 @@ final class TranscriptPolisher: ObservableObject {
                 let startSec = Float(pending[startIdx].startTime)
                 let endSec = Float(pending[endIdx].endTime)
 
+                // Derive dominant audio source from covered segments
+                let coveredSegments = pending[startIdx...endIdx]
+                let source = dominantSource(of: coveredSegments)
+
                 let para = PolishedParagraph(
                     id: idGenerator.next(),
                     text: text,
                     startSec: startSec,
                     endSec: endSec,
-                    version: 1
+                    version: 1,
+                    source: source
                 )
                 newParagraphs.append(para)
             }
@@ -316,7 +328,8 @@ final class TranscriptPolisher: ObservableObject {
             text: revision.newText,
             startSec: startSec,
             endSec: endSec,
-            version: maxVersion + 1
+            version: maxVersion + 1,
+            source: targets.first?.source
         )
 
         // Replace in the paragraphs array: remove all targets, insert revised at first target's position
@@ -396,5 +409,21 @@ final class TranscriptPolisher: ObservableObject {
         let min = total / 60
         let sec = total % 60
         return String(format: "%02d:%02d", min, sec)
+    }
+
+    /// Determine the dominant audio source from a slice of transcript segments.
+    /// Returns nil if all segments are nil/mixed.
+    private func dominantSource(of segments: ArraySlice<TranscriptSegment>) -> AudioSource? {
+        var micCount = 0
+        var sysCount = 0
+        for seg in segments {
+            switch seg.source {
+            case "mic": micCount += 1
+            case "system": sysCount += 1
+            default: break
+            }
+        }
+        if micCount == 0 && sysCount == 0 { return nil }
+        return micCount >= sysCount ? .mic : .system
     }
 }

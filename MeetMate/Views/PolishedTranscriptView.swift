@@ -103,13 +103,21 @@ private struct ParagraphRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .top, spacing: 8) {
-                Button(action: { onSeek?(paragraph.startSec) }) {
-                    Text(paragraph.timestampLabel)
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.blue)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Button(action: { onSeek?(paragraph.startSec) }) {
+                        Text(paragraph.timestampLabel)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.blue)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Seek to \(paragraph.timestampLabel)")
+
+                    if let label = paragraph.sourceLabel {
+                        Text(label)
+                            .font(.caption2)
+                            .foregroundStyle(paragraph.source == .mic ? .green : .purple)
+                    }
                 }
-                .buttonStyle(.plain)
-                .help("Seek to \(paragraph.timestampLabel)")
                 .frame(width: 48, alignment: .trailing)
 
                 VStack(alignment: .leading, spacing: 2) {
