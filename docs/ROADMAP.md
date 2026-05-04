@@ -122,24 +122,24 @@ Azure AI Speech does its own VAD server-side, but client-side VAD still saves co
 
 #### 7c. Vocabulary biasing (phrase lists)
 
-- [ ] Wire context from #3 (URL / PDF / text) into Azure Speech `PhraseListGrammar` (cloud) and Whisper `DecodingOptions.prefix` (local fallback)
-- [ ] Extract candidate terms from the context: capitalized words, acronyms, names
-- [ ] Names, paper titles, technical terms get spelled correctly after first mention
-- [ ] Per-meeting editable vocabulary list — surface in UI before recording
+- [x] Wire context from #3 (URL / PDF / text) into Azure Speech `PhraseListGrammar` (cloud) and Whisper `DecodingOptions.promptTokens` (local fallback)
+- [x] Extract candidate terms from the context: capitalized words, acronyms, names
+- [x] Names, paper titles, technical terms get spelled correctly after first mention
+- [x] Per-meeting editable vocabulary list — surface in UI before recording
 
 #### 7d. Offline re-transcribe pass (the killer feature)
 
 After the meeting ends, run a higher-quality batch transcription on the saved `mic.m4a` + `system.m4a` from #1. Same Azure Speech service, different endpoint — batch transcription gets full-context decoding instead of 1.5s sliding windows. Dramatic accuracy bump.
 
-- [ ] On meeting stop, queue an offline re-transcribe job
-- [ ] Use Azure Speech **batch transcription REST API** (upload audio to Azure Blob or use direct file submission)
-- [ ] Inject the meeting's vocabulary list (#7c) as phrase list
+- [x] On meeting stop, queue an offline re-transcribe job
+- [x] ~~Use Azure Speech batch transcription REST API~~ → Re-uses real-time WebSocket (fast-pump saved audio, no blob storage dependency)
+- [x] Inject the meeting's vocabulary list (#7c) as phrase list
 - [ ] Enable diarization in batch mode — produces cleaner speaker labels than live
-- [ ] Write re-transcribed results to **separate files**: `transcript.batch.jsonl` + `paragraphs.batch.jsonl` — never silently overwrite the live versions (they have stable IDs from §5 that §6's accept/reject UI references)
-- [ ] Keep originals as-is; rename to `.live.jsonl` only after user explicitly accepts the batch version
+- [x] Write re-transcribed results to **separate files**: `transcript.batch.jsonl` + `paragraphs.batch.jsonl` — never silently overwrite the live versions (they have stable IDs from §5 that §6's accept/reject UI references)
+- [x] Keep originals as-is; rename to `.live.jsonl` only after user explicitly accepts the batch version
 - [ ] **Accept migration**: when user taps "Accept improved transcript", do a one-shot ID-preserving merge — match paragraphs by text overlap, keep existing IDs where possible, assign new IDs only for genuinely new segments
 - [ ] Re-run polish + cheatsheet on the accepted transcript
-- [ ] UI: "Improved transcript ready" notification when done; one-click diff view + Accept/Keep Original buttons
+- [x] UI: "Improved transcript ready" notification when done; one-click diff view + Accept/Keep Original buttons
 - [ ] Local fallback: if user disabled cloud, run local `large-v3-turbo` against the saved file (no streaming constraint)
 
 #### 7e. Separate mic + system audio streams

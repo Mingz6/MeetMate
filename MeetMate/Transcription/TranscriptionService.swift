@@ -58,6 +58,9 @@ final class TranscriptionService: ObservableObject {
     private var cloudSTT: AzureSpeechSTT?
     let vadGate = VADGate()
 
+    /// Vocabulary terms for STT biasing (from context + user edits).
+    var vocabularyTerms: [String] = []
+
     /// Total seconds of audio sent to cloud STT this session.
     var cloudAudioSecondsSent: Float { cloudSTT?.totalAudioSecondsSent ?? 0 }
 
@@ -155,6 +158,9 @@ final class TranscriptionService: ObservableObject {
         guard sttMode == .cloud, let cloud = cloudSTT else { return }
         vadGate.reset()
 
+        // Inject vocabulary terms for phrase list biasing
+        cloud.phraseList = vocabularyTerms
+
         do {
             try await cloud.startContinuousRecognition(
                 onSegment: { [weak self] segment in
@@ -193,6 +199,14 @@ final class TranscriptionService: ObservableObject {
     /// Stop cloud recognition.
     func stopCloudRecognition() async {
         await cloudSTT?.stopContinuousRecognition()
+    }
+
+    /// Replace the confirmed transcript with a batch-processed version.
+    /// Used when user accepts the offline re-transcription results.
+    func replaceConfirmedTranscript(with text: String) {
+        confirmedTranscript = text
+        unconfirmedText = ""
+        updateLive()
     }
 
     private func handleCloudSegment(_ segment: STTSegment) {
@@ -266,6 +280,9 @@ final class TranscriptionService: ObservableObject {
         let relativeStart = max(0, lastConfirmedSec - purgedDurationSec)
         let token = sessionToken
 
+        // Build prompt tokens from vocabulary for biasing
+        let promptTokens: [Int]? = buildWhisperPromptTokens()
+
         let opts = DecodingOptions(
             verbose: false,
             task: .transcribe,
@@ -277,6 +294,7 @@ final class TranscriptionService: ObservableObject {
             skipSpecialTokens: true,
             withoutTimestamps: false,
             clipTimestamps: [relativeStart],
+            promptTokens: promptTokens,
             suppressBlank: true,
             compressionRatioThreshold: 2.4,
             logProbThreshold: -1.0,
@@ -444,5 +462,17 @@ final class TranscriptionService: ObservableObject {
         guard status != .error, error == nil,
               let channelData = outputBuffer.floatChannelData?[0] else { return nil }
         return Array(UnsafeBufferPointer(start: channelData, count: Int(outputBuffer.frameLength)))
+    }
+
+    /// Tokenize vocabulary terms into Whisper prompt tokens for biasing.
+    /// Returns nil if no vocabulary or tokenizer unavailable.
+    private func buildWhisperPromptTokens() -> [Int]? {
+        guard !vocabularyTerms.isEmpty, let tokenizer = whisperKit?.tokenizer else { return nil }
+        // Join terms into a prompt string. Whisper uses the prompt as "previous context"
+        // so these terms bias the model toward recognizing them.
+        let prompt = vocabularyTerms.prefix(50).joined(separator: ", ")
+        let tokens = tokenizer.encode(text: prompt)
+        // Limit to prevent eating into the decode budget
+        return tokens.isEmpty ? nil : Array(tokens.prefix(200))
     }
 }

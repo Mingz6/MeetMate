@@ -108,6 +108,34 @@ final class ContextService: ObservableObject {
         fetchedURLText = ""
         pdfText = ""
         fetchError = nil
+        userVocabulary = []
+    }
+
+    // MARK: - Vocabulary
+
+    /// User-edited vocabulary terms (persisted per meeting).
+    @Published var userVocabulary: [String] = []
+
+    /// Auto-extracted terms from context. Recomputed on access.
+    var extractedVocabulary: [String] {
+        VocabularyExtractor.extract(from: combinedContext)
+    }
+
+    /// Final merged vocabulary: user terms + auto-extracted.
+    var mergedVocabulary: [String] {
+        VocabularyExtractor.merge(extracted: extractedVocabulary, userEdited: userVocabulary)
+    }
+
+    /// Add a user term to the vocabulary list.
+    func addVocabularyTerm(_ term: String) {
+        let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !userVocabulary.contains(trimmed) else { return }
+        userVocabulary.append(trimmed)
+    }
+
+    /// Remove a user term.
+    func removeVocabularyTerm(_ term: String) {
+        userVocabulary.removeAll { $0 == term }
     }
 
     // MARK: - Persistence
