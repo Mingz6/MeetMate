@@ -158,10 +158,22 @@ final class LLMService: ObservableObject {
         // Try cloud first
         if activeProvider == .cloud {
             do {
+                let start = CFAbsoluteTimeGetCurrent()
                 let result = try await azure.generate(prompt: prompt, maxTokens: maxTokens, task: task)
+                let durationMs = Int((CFAbsoluteTimeGetCurrent() - start) * 1000)
                 reachability.reportSuccess()
                 if let usage = result.usage {
                     sessionUsage.add(usage)
+                    let deployment = task.prefersMini
+                        ? (KeychainHelper.get(forKey: KeychainHelper.azureDeploymentMiniKey) ?? "gpt-5.4-mini")
+                        : (KeychainHelper.get(forKey: KeychainHelper.azureDeploymentKey) ?? "neuro-ming-gpt")
+                    CostLogger.shared.log(
+                        deployment: deployment,
+                        operation: task.rawValue,
+                        promptTokens: usage.promptTokens,
+                        completionTokens: usage.completionTokens,
+                        durationMs: durationMs
+                    )
                 }
                 return result.text
             } catch {
@@ -208,10 +220,20 @@ final class LLMService: ObservableObject {
         defer { isGenerating = false }
 
         do {
+            let start = CFAbsoluteTimeGetCurrent()
             let result = try await azure.generateWithVision(prompt: prompt, imageJPEG: imageJPEG, maxTokens: maxTokens)
+            let durationMs = Int((CFAbsoluteTimeGetCurrent() - start) * 1000)
             reachability.reportSuccess()
             if let usage = result.usage {
                 sessionUsage.add(usage)
+                let deployment = KeychainHelper.get(forKey: KeychainHelper.azureDeploymentKey) ?? "neuro-ming-gpt"
+                CostLogger.shared.log(
+                    deployment: deployment,
+                    operation: "vision",
+                    promptTokens: usage.promptTokens,
+                    completionTokens: usage.completionTokens,
+                    durationMs: durationMs
+                )
             }
             return result.text
         } catch {
