@@ -73,9 +73,11 @@ final class CostLogger: Sendable {
     // MARK: - Pricing (mirrors worker-center/workers/ai_cost_log.py)
 
     private static let pricing: [String: (input: Double, output: Double)] = [
+        "gpt-5.4-pro": (30.0, 180.0),
         "gpt-5.4": (2.50, 15.0),
         "gpt-5.4-mini": (0.75, 4.50),
         "gpt-5.4-nano": (0.20, 1.25),
+        "gpt-5.3": (1.75, 14.0),
     ]
 
     private static let deploymentToModel: [String: String] = [
