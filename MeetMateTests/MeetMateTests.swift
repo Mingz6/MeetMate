@@ -198,6 +198,12 @@ struct DemoScriptTests {
         #expect(DemoScript.state(afterSteps: DemoScript.stepCount).suggestion == nil)
     }
 
+    @Test func testHostStartsInDemoMode() {
+        // Keeps `xcodebuild test` from launching the real app (model downloads, on-disk store).
+        #expect(DemoMode.isTestHost)
+        #expect(DemoMode.isActive)
+    }
+
     @Test func demoContentHasNoPersonalIdentifiers() {
         let end = DemoScript.state(afterSteps: DemoScript.stepCount)
         let text = ([end.confirmed] + end.paragraphs.map(\.text) + end.sheet.keyPoints + end.sheet.actionItems).joined(separator: " ")

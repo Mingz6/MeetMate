@@ -103,7 +103,7 @@ More detail in [docs/architecture.md](docs/architecture.md).
 
 The macOS app works end to end on my Mac. Everything in sections 1 to 7 of the [roadmap](docs/ROADMAP.md) is done: auto-save, cloud LLM with offline fallback, pre-meeting context, video capture, stable paragraph IDs, re-polish, and the Azure Speech pipeline. Still open: iOS and iPadOS polish, iCloud sync, a model download manager, and a real icon.
 
-Tests: 22 unit tests cover the pure logic (volume gate, vocabulary extraction, paragraph contract, task routing, token cost, the demo script). The Azure calls have no tests, because they need real credentials. The Xcode template UI tests are not run in CI.
+Tests: 23 unit tests cover the pure logic (volume gate, vocabulary extraction, paragraph contract, task routing, token cost, the demo script). The Azure calls have no tests, because they need real credentials. The Xcode template UI tests are not run in CI.
 
 ## Decisions and trade-offs
 

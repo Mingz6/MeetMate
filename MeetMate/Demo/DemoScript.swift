@@ -4,8 +4,15 @@ import Foundation
 ///
 /// Demo mode replays a scripted, fictional meeting through the real pane views.
 /// It touches no microphone, Keychain, network or model download, so it runs on a fresh clone with no setup.
+///
+/// The unit-test host app also starts in demo mode. Otherwise every `xcodebuild test` would launch the
+/// real window, start downloading the local models and open the SwiftData store on disk.
 enum DemoMode {
-    static var isActive: Bool { CommandLine.arguments.contains("--demo") }
+    static var isActive: Bool { CommandLine.arguments.contains("--demo") || isTestHost }
+
+    static var isTestHost: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    }
 
     /// Seconds between script steps. Override with `-demoInterval 0.5`.
     static var stepInterval: Double {
