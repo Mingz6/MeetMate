@@ -75,7 +75,7 @@ xcodebuild -project MeetMate.xcodeproj -scheme MeetMate -destination 'platform=m
 | First launch hangs for minutes | The local models are downloading. |
 | Azure 401 Unauthorized | Check the key and endpoint in Settings. AI Speech wants a region, not an endpoint. |
 | Polished pane reads the same as the live pane | The polish prompt fell back to drop-only mode. Check that `TranscriptPolisher.polishOnce` keeps the editor-rewrite prompt. |
-| Cost log shows 0 for a custom deployment name | Map it to a priced model: `defaults write dev.mingz.MeetMate deploymentModelMap -dict my-deployment gpt-5.4` (lowercase name). |
+| Cost log shows 0 for a custom deployment name | Map it to a priced model: `defaults write ~/Library/Containers/dev.mingz.MeetMate/Data/Library/Preferences/dev.mingz.MeetMate deploymentModelMap -dict my-deployment gpt-5.4` (lowercase name). The app is sandboxed, so `defaults write dev.mingz.MeetMate` writes a file it never reads. Restart the app after. |
 
 ## Free Apple ID expiry
 
