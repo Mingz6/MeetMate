@@ -68,6 +68,7 @@ xcodebuild -project MeetMate.xcodeproj -scheme MeetMate -destination 'platform=m
 | Symptom | Fix |
 |---|---|
 | `cannot execute tool 'metal'` during the build | Run `xcodebuild -downloadComponent MetalToolchain` once. |
+| `xcodebuild` sits at "Checking out ..." for minutes with no CPU use | Seen with Xcode 27.2 on a cold clone: SwiftPM waits on a stuck git subprocess. Press Ctrl-C and run the same command again. Packages that finished stay checked out. CI on Xcode 26.6 did not hit it. |
 | `nullptr == Tap()` precondition crash on Stop then Start | Fixed in `MicrophoneCapture` (idempotent install and remove). If it returns, check that the `tapInstalled` flag is honored. |
 | `audioanalyticsd` precondition error in the console | Sandbox noise from CoreAudio. Ignore. |
 | `throwing -10877` in the console | `kAudioUnitErr_InvalidProperty`. CoreAudio probe noise. Ignore. |
