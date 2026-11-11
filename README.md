@@ -32,7 +32,7 @@ xcodebuild -project MeetMate.xcodeproj -scheme MeetMate -configuration Debug \
 open build/Build/Products/Debug/MeetMate.app --args --demo
 ```
 
-The first build fetches and compiles WhisperKit and MLX, so give it several minutes. Later builds are fast.
+The first build fetches and compiles WhisperKit and MLX, so give it several minutes. Later builds are fast. If it sits at "Checking out" with no CPU use, Ctrl-C and run it again (see [docs/setup.md](docs/setup.md)).
 
 Run the unit tests (the UI tests need a GUI session, so I skip them here and in CI):
 
