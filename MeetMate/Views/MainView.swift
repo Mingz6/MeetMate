@@ -494,7 +494,7 @@ struct MainView: View {
     }
 }
 
-private struct RecordingDot: View {
+struct RecordingDot: View {
     @State private var pulse = false
     var body: some View {
         Circle()

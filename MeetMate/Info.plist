@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>MeetMate transcribes meeting audio locally on your device.</string>
+	<string>MeetMate records your microphone to transcribe meetings. Audio goes to your own Azure Speech resource, or stays on this Mac in local mode.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>MeetMate captures webcam frames alongside screen recording for meeting context.</string>
 	<key>NSDocumentsFolderUsageDescription</key>
