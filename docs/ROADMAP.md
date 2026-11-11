@@ -43,7 +43,6 @@ Cloud is the new default. When the network is gone, MeetMate keeps capturing aud
 - [x] **Replay queue** — while offline, queue polish/cheatsheet jobs to disk; drain when back online against the saved transcript
 - [x] Manual "Pause cloud calls" toggle in UI for cost-sensitive moments
 - [x] Cost display — exact tokens-in/out per session + estimated cost (Azure OpenAI returns `usage` in each response). Show as a running counter in the session view. Warning banner when cumulative cost exceeds a user-configurable threshold (e.g. "This session has used $X of API calls").
-- [x] Auth pattern reference: `~/code/personal/worker-center` has a working Azure OpenAI client + Keychain storage pattern — reuse, don't re-derive.
 - [x] Privacy disclosure in README — data handling, Azure Speech/OpenAI retention policy, local fallback, Keychain storage
 - [x] Update README — dropped "no cloud, no API keys" headline; reframed as cloud-first with offline fallbacks
 
