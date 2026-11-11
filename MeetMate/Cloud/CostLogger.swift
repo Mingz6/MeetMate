@@ -82,7 +82,8 @@ final class CostLogger: Sendable {
 
     /// Maps a custom Azure deployment name to a priced model name.
     /// A deployment named after its model (for example "gpt-5.4-mini") needs no entry.
-    /// Set your own with: `defaults write dev.mingz.MeetMate deploymentModelMap -dict my-deployment gpt-5.4`
+    /// The app is sandboxed, so write to its container, not the global domain:
+    /// `defaults write ~/Library/Containers/dev.mingz.MeetMate/Data/Library/Preferences/dev.mingz.MeetMate deploymentModelMap -dict my-deployment gpt-5.4`
     private static var deploymentToModel: [String: String] {
         UserDefaults.standard.dictionary(forKey: "deploymentModelMap") as? [String: String] ?? [:]
     }
