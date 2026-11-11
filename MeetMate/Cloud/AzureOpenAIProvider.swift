@@ -5,7 +5,7 @@ import Foundation
 /// Uses the chat completions endpoint:
 /// `POST {endpoint}/openai/deployments/{deployment}/chat/completions?api-version=2024-10-21`
 ///
-/// Auth: `api-key` header (same as worker-center pattern).
+/// Auth: `api-key` header.
 /// Credentials stored in Keychain via `KeychainHelper`.
 final class AzureOpenAIProvider: LLMProvider, @unchecked Sendable {
 
