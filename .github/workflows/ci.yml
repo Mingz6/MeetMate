@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: Build and test (macOS 26, Xcode 26.6)
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Pin the Xcode instead of trusting the image default. The newest on macos-26 at the time of writing.
+      - name: Select Xcode 26.6
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app
+
+      # mlx-swift compiles Metal kernels. Xcode 26+ ships the Metal toolchain as a separate download.
+      # The runner image usually has it already; fetch it only when missing.
+      - name: Metal toolchain
+        run: |
+          if xcrun -sdk macosx metal --version >/dev/null 2>&1; then
+            echo "Metal toolchain already installed"
+          else
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+
+      # WhisperKit and MLX are big. Package.resolved is committed, so the key changes only on a dependency bump.
+      - name: Cache Swift packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/spm-packages
+          key: spm-${{ runner.os }}-${{ hashFiles('MeetMate.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+
+      # CODE_SIGNING_ALLOWED=NO: no certificates on a hosted runner.
+      # MeetMateUITests is skipped: UI tests launch the app and need a GUI session with automation permission.
+      - name: Build and test
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project MeetMate.xcodeproj \
+            -scheme MeetMate \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -clonedSourcePackagesDirPath "$HOME/spm-packages" \
+            -derivedDataPath "$RUNNER_TEMP/derived-data" \
+            -skip-testing:MeetMateUITests \
+            CODE_SIGNING_ALLOWED=NO \
+            build test

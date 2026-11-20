@@ -1,7 +1,7 @@
 import Foundation
 
 /// Writes per-call JSONL records for cost tracking.
-/// Format matches worker-center's `ai_cost_log.py` schema so it can be ingested directly.
+/// One JSON object per line, so any log tool can ingest it.
 ///
 /// Log location: ~/Documents/MeetMate/ai-cost/ai-cost-YYYY-MM.jsonl
 final class CostLogger: Sendable {
@@ -70,7 +70,7 @@ final class CostLogger: Sendable {
         }
     }
 
-    // MARK: - Pricing (mirrors worker-center/workers/ai_cost_log.py)
+    // MARK: - Pricing (USD per 1M tokens)
 
     private static let pricing: [String: (input: Double, output: Double)] = [
         "gpt-5.4-pro": (30.0, 180.0),
@@ -80,9 +80,13 @@ final class CostLogger: Sendable {
         "gpt-5.3": (1.75, 14.0),
     ]
 
-    private static let deploymentToModel: [String: String] = [
-        "neuro-ming-gpt": "gpt-5.4",
-    ]
+    /// Maps a custom Azure deployment name to a priced model name.
+    /// A deployment named after its model (for example "gpt-5.4-mini") needs no entry.
+    /// The app is sandboxed, so write to its container, not the global domain:
+    /// `defaults write ~/Library/Containers/dev.mingz.MeetMate/Data/Library/Preferences/dev.mingz.MeetMate deploymentModelMap -dict my-deployment gpt-5.4`
+    private static var deploymentToModel: [String: String] {
+        UserDefaults.standard.dictionary(forKey: "deploymentModelMap") as? [String: String] ?? [:]
+    }
 
     private static let cadRate = 1.38
 

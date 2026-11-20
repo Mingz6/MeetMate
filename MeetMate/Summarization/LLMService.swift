@@ -166,7 +166,7 @@ final class LLMService: ObservableObject {
                     sessionUsage.add(usage)
                     let deployment = task.prefersMini
                         ? (KeychainHelper.get(forKey: KeychainHelper.azureDeploymentMiniKey) ?? "gpt-5.4-mini")
-                        : (KeychainHelper.get(forKey: KeychainHelper.azureDeploymentKey) ?? "neuro-ming-gpt")
+                        : (KeychainHelper.get(forKey: KeychainHelper.azureDeploymentKey) ?? "gpt-5.4")
                     CostLogger.shared.log(
                         deployment: deployment,
                         operation: task.rawValue,
@@ -226,7 +226,7 @@ final class LLMService: ObservableObject {
             reachability.reportSuccess()
             if let usage = result.usage {
                 sessionUsage.add(usage)
-                let deployment = KeychainHelper.get(forKey: KeychainHelper.azureDeploymentKey) ?? "neuro-ming-gpt"
+                let deployment = KeychainHelper.get(forKey: KeychainHelper.azureDeploymentKey) ?? "gpt-5.4"
                 CostLogger.shared.log(
                     deployment: deployment,
                     operation: "vision",

@@ -5,18 +5,35 @@ struct ProviderStatusBar: View {
     @ObservedObject var llm: LLMService
 
     var body: some View {
+        ProviderStatusLine(
+            provider: llm.activeProvider,
+            cloudPaused: llm.cloudPaused,
+            usage: llm.sessionUsage,
+            onTogglePause: { llm.cloudPaused.toggle() }
+        )
+    }
+}
+
+/// The status bar's layout, driven by plain values so demo mode can render it without a live `LLMService`.
+struct ProviderStatusLine: View {
+    let provider: LLMService.ProviderMode
+    let cloudPaused: Bool
+    let usage: SessionTokenUsage
+    let onTogglePause: () -> Void
+
+    var body: some View {
         HStack(spacing: 8) {
             // Provider indicator
             HStack(spacing: 4) {
                 Circle()
                     .fill(providerColor)
                     .frame(width: 8, height: 8)
-                Text(llm.activeProvider.rawValue)
+                Text(provider.rawValue)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
 
-            if llm.activeProvider == .recordingOnly {
+            if provider == .recordingOnly {
                 Text("— transcript + audio saved, LLM features paused")
                     .font(.caption2)
                     .foregroundStyle(.orange)
@@ -25,31 +42,31 @@ struct ProviderStatusBar: View {
             Spacer()
 
             // Session cost (only when cloud has been used)
-            if llm.sessionUsage.totalTokens > 0 {
+            if usage.totalTokens > 0 {
                 HStack(spacing: 4) {
                     Image(systemName: "dollarsign.circle")
                         .font(.caption2)
-                    Text("\(llm.sessionUsage.totalTokens) tokens · $\(llm.sessionUsage.estimatedCostUSD, specifier: "%.4f")")
+                    Text("\(usage.totalTokens) tokens · $\(usage.estimatedCostUSD, specifier: "%.4f")")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
             }
 
             // Pause/resume cloud toggle
-            if llm.activeProvider == .cloud || llm.cloudPaused {
-                Button(action: { llm.cloudPaused.toggle() }) {
-                    Image(systemName: llm.cloudPaused ? "icloud.slash" : "icloud.fill")
+            if provider == .cloud || cloudPaused {
+                Button(action: onTogglePause) {
+                    Image(systemName: cloudPaused ? "icloud.slash" : "icloud.fill")
                         .font(.caption)
-                        .foregroundStyle(llm.cloudPaused ? .orange : .blue)
+                        .foregroundStyle(cloudPaused ? .orange : .blue)
                 }
                 .buttonStyle(.plain)
-                .help(llm.cloudPaused ? "Resume cloud LLM" : "Pause cloud LLM")
+                .help(cloudPaused ? "Resume cloud LLM" : "Pause cloud LLM")
             }
         }
     }
 
     private var providerColor: Color {
-        switch llm.activeProvider {
+        switch provider {
         case .cloud: return .blue
         case .local: return .green
         case .recordingOnly: return .orange

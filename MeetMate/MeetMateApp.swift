@@ -6,12 +6,16 @@ struct MeetMateApp: App {
     var body: some Scene {
         WindowGroup {
             #if os(macOS)
-            MainView()
+            if DemoMode.isActive {
+                DemoMeetingView()
+            } else {
+                MainView()
+            }
             #else
             RecordView()
             #endif
         }
-        .modelContainer(for: [Meeting.self, TranscriptSegment.self])
+        .modelContainer(for: [Meeting.self, TranscriptSegment.self], inMemory: DemoMode.isActive)
 
         #if os(macOS)
         Settings {
